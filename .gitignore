@@ -4,5 +4,4 @@ __MACOSX
 config.txt
 results/*
 __pycache__
-docs
 _old_version.py

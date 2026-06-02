@@ -92,7 +92,7 @@ def find_config_files() -> List[Tuple[str, str, int]]:
 def draw_menu_header(cols: int) -> List[str]:
     bx = BoxRenderer(cols - 2)
     bx.top()
-    t = f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}"
+    t = f" {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}"
     bx.line(t)
     bx.sep()
     return bx.out
@@ -127,7 +127,7 @@ def _help_show_page(title: str, content: List[str]):
         max_scroll = max(0, len(content) - visible)
 
         bx.top()
-        bx.title_line(f" {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}", "")
+        bx.title_line(f" {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}", "")
         bx.sep()
         bx.line(f" {A.BOLD}{A.WHT}{title}{A.RST}")
         bx.sep()
@@ -163,7 +163,7 @@ def _help_show_page(title: str, content: List[str]):
 def _help_getting_started() -> List[str]:
     return [
         "",
-        f" {A.BOLD}{A.CYN}What is cfray?{A.RST}",
+        f" {A.BOLD}{A.CYN}What is Cloudflare Edge Scanner?{A.RST}",
         f"   A Cloudflare config scanner, speed tester, and Xray server",
         f"   deployer. Finds the fastest CF edge IPs and the best proxy",
         f"   configurations for your connection.",
@@ -175,7 +175,7 @@ def _help_getting_started() -> List[str]:
         "",
         f" {A.BOLD}{A.CYN}Basic workflow{A.RST}",
         f"   {A.WHT}1.{A.RST} Choose an input source from the main menu",
-        f"   {A.WHT}2.{A.RST} cfray resolves domains to Cloudflare edge IPs",
+        f"   {A.WHT}2.{A.RST} The scanner resolves domains to Cloudflare edge IPs",
         f"   {A.WHT}3.{A.RST} Tests TCP+TLS latency on all IPs (fast filter)",
         f"   {A.WHT}4.{A.RST} Speed tests the top IPs through progressive rounds",
         f"   {A.WHT}5.{A.RST} Results dashboard shows ranked results live",
@@ -219,7 +219,7 @@ def _help_scan_modes() -> List[str]:
     return [
         "",
         f" {A.BOLD}{A.CYN}Local Files (auto-detected){A.RST}",
-        f"   Place config files in the directory where you run cfray.",
+        f"   Place config files in the directory where you run this tool.",
         f"   Supported formats: {A.WHT}.txt  .json  .conf  .lst{A.RST}",
         f"   They appear automatically in the {A.WHT}LOCAL FILES{A.RST} section.",
         "",
@@ -244,7 +244,7 @@ def _help_scan_modes() -> List[str]:
         f"   {A.BOLD}How to use:{A.RST}",
         f"   1. Press {A.WHT}s{A.RST} in the main menu",
         f"   2. Paste your subscription URL",
-        f"   3. cfray fetches and parses the configs automatically",
+        f"   3. The scanner fetches and parses the configs automatically",
         "",
         f" {A.BOLD}{A.CYN}[T] Template + Address List{A.RST}",
         f"   Have one working config but want to test many IPs?",
@@ -256,7 +256,7 @@ def _help_scan_modes() -> List[str]:
         f"   1. Press {A.WHT}t{A.RST} in the main menu",
         f"   2. Paste your VLESS/VMess URI (the template)",
         f"   3. Enter path to a .txt file with one IP per line",
-        f"   4. cfray generates a config for each IP and scans all",
+        f"   4. The scanner generates a config for each IP and scans all",
         "",
         f"   {A.BOLD}CLI equivalent:{A.RST}",
         f"   {A.GRN}python3 scanner.py --template 'vless://...' -i addrs.txt{A.RST}",
@@ -315,10 +315,10 @@ def _help_xray_test() -> List[str]:
         f"   {A.WHT}interval:{A.RST}  delay between fragments (e.g. 10-20 ms)",
         "",
         f"   Heavier fragments = more likely to bypass DPI but slower.",
-        f"   Let cfray test all presets to find the best one for you.",
+        f"   Let the scanner test all presets to find the best one for you.",
         "",
         f" {A.BOLD}{A.CYN}Xray binary{A.RST}",
-        f"   Xray-core is auto-installed to {A.WHT}~/.cfray/bin/xray{A.RST}",
+        f"   Xray-core is auto-installed to {A.WHT}~/.cfedge/bin/xray{A.RST}",
         f"   Does NOT touch your system xray installation.",
         f"   Use {A.WHT}--xray-install{A.RST} to force reinstall.",
         "",
@@ -346,7 +346,7 @@ def _help_clean_finder() -> List[str]:
         f"      {A.WHT}Full{A.RST}     ~1.5M IPs      (every IP in CF ranges)",
         f"      {A.WHT}Mega{A.RST}     ~3M tests      (all IPs x ports 443+8443)",
         "",
-        f"   3. cfray tests TCP+TLS connectivity to each IP",
+        f"   3. The scanner tests TCP+TLS connectivity to each IP",
         f"   4. Results show reachable IPs sorted by latency",
         f"   5. Save clean IPs to a file, or continue to template scan",
         "",
@@ -357,14 +357,14 @@ def _help_clean_finder() -> List[str]:
         f"   - {A.WHT}Use with Xray test{A.RST}: full proxy speed test on clean IPs",
         "",
         f" {A.BOLD}{A.CYN}Custom subnets{A.RST}",
-        f"   By default cfray scans all official Cloudflare ranges.",
+        f"   By default the scanner scans all official Cloudflare ranges.",
         f"   You can limit to specific subnets:",
         f"   {A.GRN}python3 scanner.py --find-clean --subnets 104.16.0.0/12{A.RST}",
         f"   Or provide a file with one CIDR per line:",
         f"   {A.GRN}python3 scanner.py --find-clean --subnets subnets.txt{A.RST}",
         "",
         f" {A.BOLD}{A.CYN}Validation{A.RST}",
-        f"   cfray verifies each IP actually serves Cloudflare by",
+        f"   The scanner verifies each IP actually serves Cloudflare by",
         f"   checking for the {A.WHT}server: cloudflare{A.RST} response header.",
         f"   This filters out non-CF IPs within CF ranges.",
         "",
@@ -390,7 +390,7 @@ def _help_deploy() -> List[str]:
         f"      {A.WHT}REALITY{A.RST}  Best for censored networks (no domain needed)",
         f"      {A.WHT}TLS{A.RST}      Standard TLS (needs domain + certificate)",
         f"      {A.WHT}None{A.RST}     No encryption (not recommended)",
-        f"   5. cfray installs Xray, generates UUID + keys",
+        f"   5. The tool installs Xray, generates UUID + keys",
         f"   6. Outputs a ready-to-use client URI — just copy it!",
         "",
         f" {A.BOLD}{A.CYN}Multiple configs{A.RST}",
@@ -443,10 +443,10 @@ def _help_worker_proxy() -> List[str]:
         f" {A.BOLD}{A.CYN}How to use{A.RST}",
         f"   1. Press {A.WHT}o{A.RST} in the main menu",
         f"   2. Paste your VLESS URI (must use {A.WHT}WebSocket{A.RST} transport)",
-        f"   3. cfray generates a Worker script (JavaScript)",
+        f"   3. The tool generates a Worker script (JavaScript)",
         f"   4. Deploy it on {A.WHT}dash.cloudflare.com{A.RST} -> Workers & Pages",
         f"   5. Enter your Worker URL (e.g. {A.WHT}my-proxy.user.workers.dev{A.RST})",
-        f"   6. cfray builds a new URI with the Worker as address/SNI",
+        f"   6. The tool builds a new URI with the Worker as address/SNI",
         f"   7. Optionally run a pipeline test on the new config",
         "",
         f" {A.BOLD}{A.CYN}Requirements{A.RST}",
@@ -508,7 +508,7 @@ def _help_cli_reference() -> List[str]:
         f"   {A.WHT}--deploy-cert PATH{A.RST}   TLS certificate file",
         f"   {A.WHT}--deploy-key PATH{A.RST}    TLS private key file",
         f"   {A.WHT}--deploy-ip IP{A.RST}       Server IP (auto-detected)",
-        f"   {A.WHT}--uninstall{A.RST}          Remove everything cfray installed",
+        f"   {A.WHT}--uninstall{A.RST}          Remove everything installed by this tool",
         "",
         f" {A.BOLD}{A.CYN}Examples{A.RST}",
         "",
@@ -571,7 +571,7 @@ def tui_show_guide():
         bx = BoxRenderer(cols - 2)
 
         bx.top()
-        bx.title_line(f" {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}", "")
+        bx.title_line(f" {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}", "")
         bx.sep()
         bx.line(f" {A.BOLD}{A.WHT}Help & Guide{A.RST}")
         bx.sep()
@@ -608,7 +608,7 @@ def _clean_pick_mode() -> Optional[str]:
         cols, _ = term_size()
         bx = BoxRenderer(cols - 2)
         bx.top()
-        bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
+        bx.line(f" {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
         bx.sep()
         bx.line(f" {A.BOLD}Find Clean Cloudflare IPs{A.RST}")
         bx.line(f" {A.DIM}Scans Cloudflare IP ranges to find reachable edge IPs{A.RST}")
@@ -709,7 +709,7 @@ def _clean_show_results(
         cols, rows = term_size()
         bx = BoxRenderer(cols - 2)
         bx.top()
-        bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
+        bx.line(f" {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
         bx.sep()
 
         if results:
@@ -810,7 +810,7 @@ async def tui_run_clean_finder() -> Optional[Tuple[str, str]]:
     cols, _ = term_size()
     bx = BoxRenderer(cols - 2)
     bx.top()
-    bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
+    bx.line(f" {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
     bx.sep()
     bx.line(
         f" {A.BOLD}Generating IPs from {len(CF_SUBNETS)} Cloudflare ranges...{A.RST}"
@@ -942,8 +942,8 @@ def tui_pick_file() -> Optional[Tuple[str, str]]:
         bx = BoxRenderer(cols - 2)
         bx.top()
         bx.title_line(
-            f" ⚡ {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}",
-            f"{A.DIM}Cloudflare Config Scanner{A.RST}",
+            f" ⚡ {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}",
+            f"{A.DIM}Cloudflare Edge Scanner{A.RST}",
         )
         bx.sep()
 
@@ -1093,7 +1093,7 @@ def tui_pick_mode() -> Optional[str]:
         cols, _ = term_size()
         bx = BoxRenderer(cols - 2)
         bx.top()
-        bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
+        bx.line(f" {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
         bx.sep()
         bx.line(f" {A.BOLD}Select scan mode:{A.RST}")
         bx.blank()
@@ -1999,7 +1999,7 @@ async def _tui_run_pipeline(args, cli_uri: str = ""):
     _fl()
     xray_bin = xray_find_binary(getattr(args, "xray_bin", None))
     if not xray_bin:
-        _w(f" {A.YEL}Xray not found. Installing to ~/.cfray/bin/...{A.RST}\n")
+        _w(f" {A.YEL}Xray not found. Installing to ~/.cfedge/bin/...{A.RST}\n")
         _fl()
         xray_bin = xray_install()
         if not xray_bin:
@@ -2049,7 +2049,7 @@ class Dashboard(Component):
         elapsed = (
             _fmt_elapsed(time.monotonic() - s.start_time) if s.start_time else "0s"
         )
-        title = f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST}"
+        title = f" {A.BOLD}{A.WHT}Cloudflare Edge Scanner{A.RST}"
         right = f"{A.DIM}{elapsed}  |  {s.mode}  |  ^C stop{A.RST}"
         bx.top()
         bx.title_line(title, right)
