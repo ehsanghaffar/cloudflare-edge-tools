@@ -424,6 +424,62 @@ def do_export(st: State, base_path: str, sort_by: str = "score", top: int = 50,
     return csv_path, cfg_path, full_path
 
 
+async def _resolve(e: ConfigEntry, sem: asyncio.Semaphore, counter: List[int]) -> ConfigEntry:
+    if e.ip:
+        counter[0] += 1
+        return e
+    async with sem:
+        try:
+            loop = asyncio.get_running_loop()
+            info = await loop.getaddrinfo(e.address, 443, family=socket.AF_INET)
+            if info:
+                e.ip = info[0][4][0]
+        except Exception:
+            e.ip = ""
+        counter[0] += 1
+    return e
+
+
+async def resolve_all(st: State, workers: int = 100):
+    sem = asyncio.Semaphore(workers)
+    counter = [0]
+    total = len(st.configs)
+
+    async def _progress():
+        spin = "|/-\\"
+        i = 0
+        while counter[0] < total:
+            s = spin[i % len(spin)]
+            pct = counter[0] * 100 // max(1, total)
+            _w(f"\r  {A.CYN}{s}{A.RST} Resolving DNS... {counter[0]}/{total}  ({pct}%)  ")
+            _fl()
+            i += 1
+            await asyncio.sleep(0.15)
+        _w(f"\r  {A.GRN}OK{A.RST} Resolved {total} domains -> {len(set(c.ip for c in st.configs if c.ip))} unique IPs\n")
+        _fl()
+
+    prog_task = asyncio.create_task(_progress())
+    try:
+        st.configs = list(await asyncio.gather(*[_resolve(c, sem, counter) for c in st.configs]))
+    finally:
+        prog_task.cancel()
+        try:
+            await prog_task
+        except asyncio.CancelledError:
+            pass
+    for c in st.configs:
+        if c.ip:
+            st.ip_map[c.ip].append(c)
+    st.ips = list(st.ip_map.keys())
+    for ip in st.ips:
+        cs = st.ip_map[ip]
+        st.res[ip] = Result(
+            ip=ip,
+            domains=[c.address for c in cs],
+            uris=[c.original_uri for c in cs if c.original_uri],
+        )
+
+
 async def run_scan(st: State, workers: int, speed_workers: int, timeout: float, speed_timeout: float):
     try:
         os.makedirs("results", exist_ok=True)
@@ -617,17 +673,43 @@ async def run_tui(args, deploy_mode=False):
             input_method = None
             input_value = None
             continue
+        st.phase = "dns"
+        st.phase_label = "Resolving DNS"
+        try:
+            await resolve_all(st)
+        except Exception as e:
+            _w(A.SHOW + "\n")
+            print(f"DNS resolution error: {e}")
+            return
+        if not st.ips:
+            _w(A.SHOW + "\n")
+            print("No IPs resolved — check network or config addresses.")
+            return
         dash = Dashboard(st)
+        refresh = asyncio.create_task(_refresh_loop(dash, st))
         scan_task = asyncio.ensure_future(
             run_scan(st, args.workers, args.speed_workers,
                      args.timeout, args.speed_timeout))
-        refresh_task = asyncio.ensure_future(_refresh_loop(dash, st))
-        await scan_task
-        refresh_task.cancel()
+        old_sigint = signal.getsignal(signal.SIGINT)
+
+        def _sig(sig, frame):
+            st.interrupted = True
+            st.finished = True
+            scan_task.cancel()
+        signal.signal(signal.SIGINT, _sig)
         try:
-            await refresh_task
-        except (asyncio.CancelledError, Exception):
-            pass
+            await scan_task
+        except asyncio.CancelledError:
+            st.interrupted = True
+            st.finished = True
+            calc_scores(st)
+        signal.signal(signal.SIGINT, old_sigint)
+        if refresh:
+            refresh.cancel()
+            try:
+                await refresh
+            except asyncio.CancelledError:
+                pass
         if st.interrupted and not st.finished:
             _w(f"\n {A.YEL}Scan interrupted. Press any key for menu...{A.RST}\n")
             _fl()
@@ -738,7 +820,29 @@ async def run_headless(args):
     print(f"Loaded {len(configs)} configs from {source}")
     print(f"Mode: {st.mode}, Latency workers: {args.workers}, Speed workers: {args.speed_workers}")
     print(f"Latency timeout: {args.timeout}s, Speed timeout: {args.speed_timeout}s")
-    await run_scan(st, args.workers, args.speed_workers, args.timeout, args.speed_timeout)
+    print("Resolving DNS...")
+    await resolve_all(st)
+    print(f"  {len(st.ips)} unique IPs")
+    if not st.ips:
+        return
+    scan_task = asyncio.ensure_future(
+        run_scan(st, args.workers, args.speed_workers, args.timeout, args.speed_timeout)
+    )
+    old_sigint = signal.getsignal(signal.SIGINT)
+
+    def _sig(sig, frame):
+        st.interrupted = True
+        st.finished = True
+        scan_task.cancel()
+    signal.signal(signal.SIGINT, _sig)
+    try:
+        await scan_task
+    except asyncio.CancelledError:
+        st.interrupted = True
+        st.finished = True
+        calc_scores(st)
+        print("\n  Interrupted! Exporting partial results...")
+    signal.signal(signal.SIGINT, old_sigint)
     if st.finished:
         csv_p, cfg_p, full_p = do_export(st, source, top=st.top)
         print(f"\nResults saved to:")
