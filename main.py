@@ -1,12 +1,4 @@
-#!/usr/bin/env python3
-#
-# Usage:
-#   python3 scanner.py                              Interactive TUI
-#   python3 scanner.py -i configs.txt               Normal mode
-#   python3 scanner.py --sub https://example.com/sub Fetch from subscription
-#   python3 scanner.py --template "vless://..." -i addrs.json  Generate + test
-#   python3 scanner.py --find-clean --no-tui --clean-mode mega  Clean IP scan
-#
+# Cloudflare Edge Scanner v1.1 - Test VLESS/VMess proxy configs
 
 import asyncio
 import argparse

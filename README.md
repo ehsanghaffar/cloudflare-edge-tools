@@ -1,5 +1,8 @@
 # Cloudflare Edge Scanner
 
+- [English](README.md)
+- [فارسی](README.fa.md)
+
 A command-line and Textual TUI utility for scanning VLESS/VMess/Trojan proxy configs, finding Cloudflare edge IPs, and evaluating connection performance.
 
 ## What This Does
