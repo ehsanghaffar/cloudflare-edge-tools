@@ -3,6 +3,41 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 
+def calc_scores(st: "State"):
+    has_speed = any(r.best_mbps > 0 for r in st.res.values())
+    for r in st.res.values():
+        if not r.alive:
+            r.score = 0
+            continue
+        lat = max(0, 100 - r.tls_ms / 10) if r.tls_ms > 0 else 0
+        spd = min(100, r.best_mbps * 20) if r.best_mbps > 0 else 0
+        ttfb = max(0, 100 - r.ttfb_ms / 5) if r.ttfb_ms > 0 else 0
+        if r.best_mbps > 0:
+            r.score = round(lat * 0.35 + spd * 0.50 + ttfb * 0.15, 1)
+        elif has_speed:
+            r.score = round(lat * 0.35, 1)
+        else:
+            r.score = round(lat, 1)
+
+
+def sorted_alive(st: "State", key: str = "score") -> List["Result"]:
+    alive = [r for r in st.res.values() if r.alive]
+    if key == "score":
+        alive.sort(key=lambda r: r.score, reverse=True)
+    elif key == "latency":
+        alive.sort(key=lambda r: r.tls_ms)
+    elif key == "speed":
+        alive.sort(key=lambda r: r.best_mbps, reverse=True)
+    return alive
+
+
+def sorted_all(st: "State", key: str = "score") -> List["Result"]:
+    alive = sorted_alive(st, key)
+    dead = [r for r in st.res.values() if not r.alive]
+    dead.sort(key=lambda r: r.ip)
+    return alive + dead
+
+
 @dataclass
 class ConfigEntry:
     address: str

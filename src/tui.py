@@ -24,7 +24,8 @@ from src.config_parse import (fetch_sub, generate_from_template, load_addresses,
                               load_input, parse_config, parse_rounds_str, parse_size,
                               parse_vless_full, parse_vmess_full)
 from src.models import (CleanScanState, ConfigEntry, DeployState, PipelineConfig,
-                        Result, RoundCfg, State, XrayTestState, XrayVariation)
+                        Result, RoundCfg, State, XrayTestState, XrayVariation,
+                        calc_scores, sorted_alive, sorted_all)
 from src.rate_limiter import CFRateLimiter
 from src.speed_test import phase1, phase2_round
 from src.utils import (_dbg, _fmt_elapsed, _flush_stdin, _prompt_number,
@@ -45,41 +46,6 @@ def _results_path(filename: str) -> str:
     return os.path.join(RESULTS_DIR, filename)
 
 
-def calc_scores(st: State):
-    has_speed = any(r.best_mbps > 0 for r in st.res.values())
-    for r in st.res.values():
-        if not r.alive:
-            r.score = 0
-            continue
-        lat = max(0, 100 - r.tls_ms / 10) if r.tls_ms > 0 else 0
-        spd = min(100, r.best_mbps * 20) if r.best_mbps > 0 else 0
-        ttfb = max(0, 100 - r.ttfb_ms / 5) if r.ttfb_ms > 0 else 0
-        if r.best_mbps > 0:
-            r.score = round(lat * 0.35 + spd * 0.50 + ttfb * 0.15, 1)
-        elif has_speed:
-            r.score = round(lat * 0.35, 1)
-        else:
-            r.score = round(lat, 1)
-
-
-def sorted_alive(st: State, key: str = "score") -> List[Result]:
-    alive = [r for r in st.res.values() if r.alive]
-    if key == "score":
-        alive.sort(key=lambda r: r.score, reverse=True)
-    elif key == "latency":
-        alive.sort(key=lambda r: r.tls_ms)
-    elif key == "speed":
-        alive.sort(key=lambda r: r.best_mbps, reverse=True)
-    return alive
-
-
-def sorted_all(st: State, key: str = "score") -> List[Result]:
-    alive = sorted_alive(st, key)
-    dead = [r for r in st.res.values() if not r.alive]
-    dead.sort(key=lambda r: r.ip)
-    return alive + dead
-
-
 def find_config_files() -> List[Tuple[str, str, int]]:
     results: List[Tuple[str, str, int]] = []
     for ext, ftype in [("*.txt", "txt"), ("*.json", "json"), ("*.conf", "config"), ("*.lst", "list")]:
@@ -95,28 +61,30 @@ def find_config_files() -> List[Tuple[str, str, int]]:
 
 
 def draw_menu_header(cols: int) -> List[str]:
-    W = cols - 2
-    lines = []
-    lines.append(f"{A.CYN}╔{'═' * W}╗{A.RST}")
+    bx = BoxRenderer(cols - 2)
+    bx.top()
     t = f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}"
-    lines.append(f"{A.CYN}║{A.RST}" + t + " " * (W - _vl(t)) + f"{A.CYN}║{A.RST}")
-    lines.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-    return lines
+    bx.line(t)
+    bx.sep()
+    return bx.out
 
 
 def draw_box_line(content: str, cols: int) -> str:
-    W = cols - 2
-    vl = _vl(content)
-    pad = " " * max(0, W - vl)
-    return f"{A.CYN}║{A.RST}{content}{pad}{A.CYN}║{A.RST}"
+    bx = BoxRenderer(cols - 2)
+    bx.line(content)
+    return bx.out[0]
 
 
 def draw_box_sep(cols: int) -> str:
-    return f"{A.CYN}╠{'═' * (cols - 2)}╣{A.RST}"
+    bx = BoxRenderer(cols - 2)
+    bx.sep()
+    return bx.out[0]
 
 
 def draw_box_bottom(cols: int) -> str:
-    return f"{A.CYN}╚{'═' * (cols - 2)}╝{A.RST}"
+    bx = BoxRenderer(cols - 2)
+    bx.bottom()
+    return bx.out[0]
 
 
 def _help_show_page(title: str, content: List[str]):
@@ -124,33 +92,28 @@ def _help_show_page(title: str, content: List[str]):
     while True:
         _w(A.CLR + A.HOME + A.HIDE)
         cols, rows = term_size()
-        W = cols - 2
+        bx = BoxRenderer(cols - 2)
         visible = max(3, rows - 8)
         page = content[scroll:scroll + visible]
         max_scroll = max(0, len(content) - visible)
 
-        out: List[str] = []
-        _cpos = f"\033[{W + 2}G"
-        out.append(f"{A.CYN}{'=' * (W + 2)}{A.RST}")
-        t = f" {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}"
-        out.append(f"{A.CYN}|{A.RST}{t}{' ' * max(0, W - _vl(t))}{_cpos}{A.CYN}|{A.RST}")
-        out.append(f"{A.CYN}{'-' * (W + 2)}{A.RST}")
-        ttl = f" {A.BOLD}{A.WHT}{title}{A.RST}"
-        out.append(f"{A.CYN}|{A.RST}{ttl}{' ' * max(0, W - _vl(ttl))}{_cpos}{A.CYN}|{A.RST}")
-        out.append(f"{A.CYN}{'-' * (W + 2)}{A.RST}")
+        bx.top()
+        bx.title_line(f" {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}", "")
+        bx.sep()
+        bx.line(f" {A.BOLD}{A.WHT}{title}{A.RST}")
+        bx.sep()
         for line in page:
-            vl = _vl(line)
-            out.append(f"{A.CYN}|{A.RST}{line}{' ' * max(0, W - vl)}{_cpos}{A.CYN}|{A.RST}")
+            bx.line(line)
         for _ in range(visible - len(page)):
-            out.append(f"{A.CYN}|{A.RST}{' ' * W}{_cpos}{A.CYN}|{A.RST}")
-        out.append(f"{A.CYN}{'-' * (W + 2)}{A.RST}")
+            bx.blank()
+        bx.sep()
         if max_scroll > 0:
             pct = scroll * 100 // max_scroll if max_scroll else 100
             nav = f" {A.DIM}[j/k] Scroll  [{pct}%]  [b] Back{A.RST}"
         else:
             nav = f" {A.DIM}[b] Back to help menu{A.RST}"
-        out.append(f"{A.CYN}|{A.RST}{nav}{' ' * max(0, W - _vl(nav))}{_cpos}{A.CYN}|{A.RST}")
-        out.append(f"{A.CYN}{'=' * (W + 2)}{A.RST}")
+        bx.line(nav)
+        bx.bottom()
 
         _w("\n".join(out) + "\n")
         _fl()
@@ -550,35 +513,27 @@ def tui_show_guide():
     while True:
         _w(A.CLR + A.HOME + A.HIDE)
         cols, _ = term_size()
-        W = cols - 2
+        bx = BoxRenderer(cols - 2)
 
-        out: List[str] = []
-        _cpos = f"\033[{W + 2}G"
-        def bx(c: str):
-            pad = " " * max(0, W - _vl(c))
-            out.append(f"{A.CYN}|{A.RST}{c}{pad}{_cpos}{A.CYN}|{A.RST}")
+        bx.top()
+        bx.title_line(f" {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}", "")
+        bx.sep()
+        bx.line(f" {A.BOLD}{A.WHT}Help & Guide{A.RST}")
+        bx.sep()
+        bx.blank()
 
-        out.append(f"{A.CYN}{'=' * (W + 2)}{A.RST}")
-        t = f" {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}"
-        bx(t)
-        out.append(f"{A.CYN}{'-' * (W + 2)}{A.RST}")
-        bx(f" {A.BOLD}{A.WHT}Help & Guide{A.RST}")
-        out.append(f"{A.CYN}{'-' * (W + 2)}{A.RST}")
-        bx("")
-
-        icons = ["🚀", "📡", "⚡", "🔍", "🛠", "☁", "💻"]
         for i, (title, desc, _) in enumerate(pages):
             num = f"  {A.CYN}{A.BOLD}{i + 1}{A.RST}"
-            bx(f"{num}.  {icons[i]} {A.BOLD}{A.WHT}{title}{A.RST}")
-            bx(f"      {A.DIM}{desc}{A.RST}")
-            bx("")
+            bx.line(f"{num}.  {A.BOLD}{A.WHT}{title}{A.RST}")
+            bx.line(f"      {A.DIM}{desc}{A.RST}")
+            bx.blank()
 
-        bx(f" {A.DIM}{'─' * (W - 2)}{A.RST}")
-        bx(f" {A.DIM}[1-{len(pages)}] Open topic    [q] Back to menu{A.RST}")
-        bx("")
-        bx(f" {A.BOLD}{A.WHT}Made By Sam — SamNet Technologies{A.RST}")
-        bx(f" {A.DIM}https://github.com/SamNet-dev/cfray{A.RST}")
-        out.append(f"{A.CYN}{'=' * (W + 2)}{A.RST}")
+        bx.sep()
+        bx.line(f" {A.DIM}[1-{len(pages)}] Open topic    [q] Back to menu{A.RST}")
+        bx.blank()
+        bx.line(f" {A.BOLD}{A.WHT}Made By Sam \u2014 SamNet Technologies{A.RST}")
+        bx.line(f" {A.DIM}https://github.com/SamNet-dev/cfray{A.RST}")
+        bx.bottom()
 
         _w("\n".join(out) + "\n")
         _fl()
@@ -596,13 +551,16 @@ def _clean_pick_mode() -> Optional[str]:
     while True:
         _w(A.CLR + A.HOME + A.HIDE)
         cols, _ = term_size()
-        lines = draw_menu_header(cols)
-        lines.append(draw_box_line(f" {A.BOLD}Find Clean Cloudflare IPs{A.RST}", cols))
-        lines.append(draw_box_line(f" {A.DIM}Scans Cloudflare IP ranges to find reachable edge IPs{A.RST}", cols))
-        lines.append(draw_box_line("", cols))
-        lines.append(draw_box_sep(cols))
-        lines.append(draw_box_line(f" {A.BOLD}Select scan scope:{A.RST}", cols))
-        lines.append(draw_box_line("", cols))
+        bx = BoxRenderer(cols - 2)
+        bx.top()
+        bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
+        bx.sep()
+        bx.line(f" {A.BOLD}Find Clean Cloudflare IPs{A.RST}")
+        bx.line(f" {A.DIM}Scans Cloudflare IP ranges to find reachable edge IPs{A.RST}")
+        bx.blank()
+        bx.sep()
+        bx.line(f" {A.BOLD}Select scan scope:{A.RST}")
+        bx.blank()
 
         for name, key in [("quick", "1"), ("normal", "2"), ("full", "3"), ("mega", "4")]:
             cfg = CLEAN_MODES[name]
@@ -610,18 +568,18 @@ def _clean_pick_mode() -> Optional[str]:
             lbl = f"{A.BOLD}{cfg['label']}{A.RST}"
             if name == "normal":
                 lbl += f" {A.GRN}(recommended){A.RST}"
-            lines.append(draw_box_line(f"   {num}  {lbl}", cols))
+            bx.line(f"   {num}  {lbl}")
             desc = cfg["desc"]
             if len(cfg.get("ports", [])) > 1:
                 desc += f"  (ports: {', '.join(str(p) for p in cfg['ports'])})"
-            lines.append(draw_box_line(f"      {A.DIM}{desc}{A.RST}", cols))
-            lines.append(draw_box_line("", cols))
+            bx.line(f"      {A.DIM}{desc}{A.RST}")
+            bx.blank()
 
-        lines.append(draw_box_sep(cols))
-        lines.append(draw_box_line(f" {A.DIM}[1-4] Select   [B] Back   [Q] Quit{A.RST}", cols))
-        lines.append(draw_box_bottom(cols))
+        bx.sep()
+        bx.line(f" {A.DIM}[1-4] Select   [B] Back   [Q] Quit{A.RST}")
+        bx.bottom()
 
-        _w("\n".join(lines) + "\n")
+        _w("\n".join(bx.out) + "\n")
         _fl()
 
         key = _read_key_blocking()
@@ -642,38 +600,37 @@ def _clean_pick_mode() -> Optional[str]:
 def _draw_clean_progress(scan_state: CleanScanState):
     _w(A.CLR + A.HOME)
     cols, _ = term_size()
-    w = cols - 2
+    bx = BoxRenderer(cols - 2)
     elapsed = _fmt_elapsed(time.monotonic() - scan_state.start_time) if scan_state.start_time else "0s"
-
-    def bx(msg): _w(f" {msg}\n")
-
     pct = scan_state.done * 100 // max(1, scan_state.total)
-    filled = max(1, pct * (w - 10) // 100) if pct < 100 else w - 10
-    bar = "\u2588" * filled + "\u2591" * (w - 10 - filled)
-    bx(f" {A.WHT}{'=' * (w)}{A.RST}")
-    bx(f" {A.BOLD}{A.CYN}Clean IP Finder{A.RST}")
-    bx(f" {A.BOLD}{A.GRN}Scanning Cloudflare IP ranges{A.RST}")
-    bx(f" {A.WHT}{'=' * (w)}{A.RST}")
-    bx(f" Probing [{bar}] {scan_state.done:,}/{scan_state.total:,}  {pct}%")
-    found_line = f" {A.GRN}Found: {scan_state.found:,} clean IPs{A.RST}"
-    bx(f" {elapsed:>4s}  {found_line}")
+
+    bw = max(1, bx.w - 42)
+    filled = int(bw * pct / 100)
+    bar = f"{A.GRN}{'█' * filled}{A.DIM}{'░' * (bw - filled)}{A.RST}"
+
+    bx.top()
+    bx.title_line(f" {A.BOLD}{A.CYN}Clean IP Finder{A.RST}",
+                    f"{A.DIM}{elapsed}{A.RST}")
+    bx.sep()
+    bx.line(f" {A.BOLD}{A.GRN}Scanning Cloudflare IP ranges{A.RST}")
+    bx.line(f" Probing {bar} {scan_state.done:,}/{scan_state.total:,}  {pct}%")
+    bx.line(f" {A.GRN}Found: {scan_state.found:,} clean IPs{A.RST}")
     if scan_state.results:
         best_lat = scan_state.results[0][1]
-        bx(f" {A.DIM}Best latency: {best_lat:.1f} ms{A.RST}")
-    bx(f" {A.WHT}{'-' * (w)}{A.RST}")
+        bx.line(f" {A.DIM}Best latency: {best_lat:.1f} ms{A.RST}")
+    bx.sep()
     if scan_state.results:
         vis = min(12, len(scan_state.results))
-        pre_rows = max(0, vis - 8)
         rows = scan_state.results[:vis]
-        bx(f" {'IP':20s}  {'Latency':>8s}")
-        for i, (ip, lat) in enumerate(scan_state.results[:vis]):
-            star = " " if i >= pre_rows else " "
-            bx(f" {star}{i + 1:2d}. {ip:20s}  {lat:7.1f}ms")
-    used = len(scan_state.results[:vis]) if scan_state.results else 1
-    bx(f" {A.WHT}{'=' * (w)}{A.RST}")
-    bx("")
-    bx(f" {A.DIM}Press any key to stop scan and review results{A.RST}")
-    bx("")
+        bx.line(f" {A.BOLD}{'IP':<20}  {'Latency':>8}{A.RST}")
+        bx.line(f" {A.DIM}{'─'*20}  {'─'*8}{A.RST}")
+        for i, (ip, lat) in enumerate(rows):
+            bx.line(f" {i+1:>3}. {ip:<20}  {A.GRN}{lat:>6.0f}ms{A.RST}")
+    bx.sep()
+    bx.line(f" {A.DIM}Press any key to stop scan and review results{A.RST}")
+    bx.bottom()
+
+    _w("\n".join(bx.out) + "\n")
     _fl()
 
 
@@ -685,15 +642,18 @@ def _clean_show_results(results: List[Tuple[str, float]], elapsed: str) -> Optio
     while True:
         _w(A.CLR + A.HOME + A.HIDE)
         cols, rows = term_size()
-        lines = draw_menu_header(cols)
+        bx = BoxRenderer(cols - 2)
+        bx.top()
+        bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
+        bx.sep()
 
         if results:
-            lines.append(draw_box_line(
+            bx.line(
                 f" {A.BOLD}{A.GRN}Scan Complete!{A.RST}  "
-                f"Found {A.BOLD}{len(results):,}{A.RST} clean IPs in {elapsed}", cols))
+                f"Found {A.BOLD}{len(results):,}{A.RST} clean IPs in {elapsed}")
         else:
-            lines.append(draw_box_line(f" {A.YEL}Scan Complete — no clean IPs found.{A.RST}", cols))
-        lines.append(draw_box_sep(cols))
+            bx.line(f" {A.YEL}Scan Complete — no clean IPs found.{A.RST}")
+        bx.sep()
 
         if display:
             vis = max(5, rows - 13)
@@ -705,29 +665,26 @@ def _clean_show_results(results: List[Tuple[str, float]], elapsed: str) -> Optio
                 if len(results) > MAX_SHOW:
                     pos += f", {len(results):,} total"
                 pos += f"]{A.RST}"
-                hdr += " " * max(1, cols - 2 - _vl(hdr) - _vl(pos) - 1) + pos
-            lines.append(draw_box_line(hdr, cols))
-            lines.append(draw_box_line(
-                f" {A.DIM}{'─'*4}  {'─'*22} {'─'*8}{A.RST}", cols))
+                hdr += " " * max(1, bx.w - _vl(hdr) - _vl(pos)) + pos
+            bx.line(hdr)
+            bx.line(f" {A.DIM}{'─'*4}  {'─'*22} {'─'*8}{A.RST}")
 
             for i in range(offset, end):
                 ip, lat = display[i]
-                lines.append(draw_box_line(
-                    f" {i+1:>4}  {ip:<22} {A.GRN}{lat:>6.0f}ms{A.RST}", cols))
+                bx.line(f" {i+1:>4}  {ip:<22} {A.GRN}{lat:>6.0f}ms{A.RST}")
 
-        lines.append(draw_box_line("", cols))
-        lines.append(draw_box_sep(cols))
+        bx.blank()
+        bx.sep()
         ft = ""
         if results:
             ft += f" {A.CYN}[S]{A.RST} Save all  {A.CYN}[T]{A.RST} Template+SpeedTest  "
         ft += f" {A.CYN}[B]{A.RST} Back"
-        lines.append(draw_box_line(ft, cols))
+        bx.line(ft)
         if display and len(display) > vis:
-            lines.append(draw_box_line(
-                f" {A.DIM}j/↓ down  k/↑ up  n/p page down/up{A.RST}", cols))
-        lines.append(draw_box_bottom(cols))
+            bx.line(f" {A.DIM}j/↓ down  k/↑ up  n/p page down/up{A.RST}")
+        bx.bottom()
 
-        _w("\n".join(lines) + "\n")
+        _w("\n".join(bx.out) + "\n")
         _fl()
 
         key = _read_key_blocking()
@@ -781,11 +738,13 @@ async def tui_run_clean_finder() -> Optional[Tuple[str, str]]:
 
     _w(A.CLR + A.HOME)
     cols, _ = term_size()
-    lines = draw_menu_header(cols)
-    lines.append(draw_box_line(
-        f" {A.BOLD}Generating IPs from {len(CF_SUBNETS)} Cloudflare ranges...{A.RST}", cols))
-    lines.append(draw_box_bottom(cols))
-    _w("\n".join(lines) + "\n")
+    bx = BoxRenderer(cols - 2)
+    bx.top()
+    bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
+    bx.sep()
+    bx.line(f" {A.BOLD}Generating IPs from {len(CF_SUBNETS)} Cloudflare ranges...{A.RST}")
+    bx.bottom()
+    _w("\n".join(bx.out) + "\n")
     _fl()
 
     ips = generate_cf_ips(CF_SUBNETS, scan_cfg["sample"])
@@ -880,58 +839,55 @@ def _tui_prompt_text(label: str) -> Optional[str]:
     return val if val else None
 
 
+def _menu_section(bx: BoxRenderer, label: str, _):
+    sep = f"{A.DIM}─" * max(1, bx.w - len(label) - 1)
+    bx.line(f" {sep} {A.BOLD}{A.WHT}{label}{A.RST}")
+
+
 def tui_pick_file() -> Optional[Tuple[str, str]]:
     enable_ansi()
     files = find_config_files()
 
     while True:
         _w(A.CLR + A.HOME + A.HIDE)
-        cols, rows = term_size()
-        W = cols - 2
+        cols, _ = term_size()
+        bx = BoxRenderer(cols - 2)
+        bx.top()
+        bx.title_line(f" ⚡ {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}",
+                        f"{A.DIM}Cloudflare Config Scanner{A.RST}")
+        bx.sep()
 
-        out: List[str] = []
-        def bx(c: str):
-            pad = " " * max(0, W - _vl(c))
-            out.append(f"{A.CYN}║{A.RST}{c}{pad}\033[{W + 2}G{A.CYN}║{A.RST}")
-
-        out.append(f"{A.CYN}╔{'═' * W}╗{A.RST}")
-        title = f" ⚡ {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}"
-        subtitle = f"{A.DIM}Cloudflare Config Scanner{A.RST}"
-        bx(title + "  " + subtitle)
-        bx("")
-
-        bx(f" {A.DIM}── {A.BOLD}{A.WHT}📁 LOCAL FILES{A.RST} {A.DIM}{'─' * max(1, W - 19)}{A.RST}")
+        _menu_section(bx, "LOCAL FILES", bx.w)
         if files:
             for i, (path, ftype, count) in enumerate(files[:9]):
                 num = f" {A.CYN}{A.BOLD}{i + 1}{A.RST}."
                 name = os.path.basename(path)
                 desc = f"{A.DIM}{ftype}, {count} entries{A.RST}"
-                bx(f" {num}  📄 {name:<28} {desc}")
+                bx.line(f" {num}  {name:<28} {desc}")
         else:
-            bx(f"    {A.DIM}No config files found in current directory{A.RST}")
-            bx(f"    {A.DIM}Drop .txt or .json files here, or use options below{A.RST}")
-        bx("")
+            bx.line(f"    {A.DIM}No config files found in current directory{A.RST}")
+            bx.line(f"    {A.DIM}Drop .txt or .json files here, or use options below{A.RST}")
+        bx.blank()
 
-        bx(f" {A.DIM}── {A.BOLD}{A.WHT}🌐 REMOTE SOURCES{A.RST} {A.DIM}{'─' * max(1, W - 22)}{A.RST}")
-        bx(f"  {A.CYN}{A.BOLD}s{A.RST}.  🔗 {A.WHT}Subscription URL{A.RST}        {A.DIM}Fetch configs from remote URL{A.RST}")
-        bx(f"  {A.CYN}{A.BOLD}p{A.RST}.  📂 {A.WHT}Enter File Path{A.RST}         {A.DIM}Load from custom file path{A.RST}")
-        bx("")
+        _menu_section(bx, "REMOTE SOURCES", bx.w)
+        bx.line(f"  {A.CYN}{A.BOLD}s{A.RST}.  {A.WHT}Subscription URL{A.RST}        {A.DIM}Fetch configs from remote URL{A.RST}")
+        bx.line(f"  {A.CYN}{A.BOLD}p{A.RST}.  {A.WHT}Enter File Path{A.RST}         {A.DIM}Load from custom file path{A.RST}")
+        bx.blank()
 
-        bx(f" {A.DIM}── {A.BOLD}{A.WHT}🔧 TOOLS{A.RST} {A.DIM}{'─' * max(1, W - 13)}{A.RST}")
-        bx(f"  {A.CYN}{A.BOLD}t{A.RST}.  🧩 {A.WHT}Template + Addresses{A.RST}    {A.DIM}Test one config against many IPs{A.RST}")
-        bx(f"  {A.CYN}{A.BOLD}f{A.RST}.  🔍 {A.WHT}Clean IP Finder{A.RST}         {A.DIM}Scan Cloudflare IP ranges{A.RST}")
-        bx(f"  {A.CYN}{A.BOLD}x{A.RST}.  ⚡ {A.WHT}Xray Pipeline Test{A.RST}    {A.DIM}Smart: probe → validate → expand → speed{A.RST}")
+        _menu_section(bx, "TOOLS", bx.w)
+        bx.line(f"  {A.CYN}{A.BOLD}t{A.RST}.  {A.WHT}Template + Addresses{A.RST}    {A.DIM}Test one config against many IPs{A.RST}")
+        bx.line(f"  {A.CYN}{A.BOLD}f{A.RST}.  {A.WHT}Clean IP Finder{A.RST}         {A.DIM}Scan Cloudflare IP ranges{A.RST}")
+        bx.line(f"  {A.CYN}{A.BOLD}x{A.RST}.  {A.WHT}Xray Pipeline Test{A.RST}      {A.DIM}Smart: probe → validate → expand → speed{A.RST}")
         if sys.platform == "linux":
-            bx(f"  {A.CYN}{A.BOLD}d{A.RST}.  🚀 {A.WHT}Deploy Xray Server{A.RST}    {A.DIM}Install Xray on Linux VPS{A.RST}")
-        bx(f"  {A.CYN}{A.BOLD}o{A.RST}.  ☁  {A.WHT}Worker Proxy{A.RST}          {A.DIM}Fresh workers.dev SNI for any VLESS config{A.RST}")
+            bx.line(f"  {A.CYN}{A.BOLD}d{A.RST}.  {A.WHT}Deploy Xray Server{A.RST}    {A.DIM}Install Xray on Linux VPS{A.RST}")
+        bx.line(f"  {A.CYN}{A.BOLD}o{A.RST}.  {A.WHT}Worker Proxy{A.RST}          {A.DIM}Fresh workers.dev SNI for any VLESS config{A.RST}")
         if sys.platform == "linux":
-            bx(f"  {A.CYN}{A.BOLD}c{A.RST}.  🔧 {A.WHT}Connection Manager{A.RST}    {A.DIM}Manage existing Xray server configs{A.RST}")
-        bx("")
-        bx(f" {A.DIM}{'─' * (W - 2)}{A.RST}")
-        bx(f" {A.DIM}[h] ❓ Help    [q] 🚪 Quit{A.RST}")
-        out.append(f"{A.CYN}╚{'═' * W}╝{A.RST}")
+            bx.line(f"  {A.CYN}{A.BOLD}c{A.RST}.  {A.WHT}Connection Manager{A.RST}    {A.DIM}Manage existing Xray server configs{A.RST}")
+        bx.blank()
+        bx.line(f" {A.DIM}[h] Help    [q] Quit{A.RST}")
+        bx.bottom()
 
-        _w("\n".join(out) + "\n")
+        _w("\n".join(bx.out) + "\n")
         _fl()
 
         key = _read_key_blocking()
@@ -1017,9 +973,12 @@ def tui_pick_mode() -> Optional[str]:
     while True:
         _w(A.CLR + A.HOME + A.HIDE)
         cols, _ = term_size()
-        lines = draw_menu_header(cols)
-        lines.append(draw_box_line(f" {A.BOLD}Select scan mode:{A.RST}", cols))
-        lines.append(draw_box_line("", cols))
+        bx = BoxRenderer(cols - 2)
+        bx.top()
+        bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
+        bx.sep()
+        bx.line(f" {A.BOLD}Select scan mode:{A.RST}")
+        bx.blank()
 
         modes = [("quick", "1"), ("normal", "2"), ("thorough", "3")]
         for name, key in modes:
@@ -1028,27 +987,16 @@ def tui_pick_mode() -> Optional[str]:
             lbl = f"{A.BOLD}{p['label']}{A.RST}"
             if name == "normal":
                 lbl += f" {A.GRN}(recommended){A.RST}"
-            lines.append(draw_box_line(f"   {num}  {lbl}", cols))
-            lines.append(
-                draw_box_line(f"      {A.DIM}{p['desc']}{A.RST}", cols)
-            )
-            lines.append(
-                draw_box_line(
-                    f"      {A.DIM}Data: {p['data']}  |  Est. time: {p['time']}{A.RST}",
-                    cols,
-                )
-            )
-            lines.append(draw_box_line("", cols))
+            bx.line(f"   {num}  {lbl}")
+            bx.line(f"      {A.DIM}{p['desc']}{A.RST}")
+            bx.line(f"      {A.DIM}Data: {p['data']}  |  Est. time: {p['time']}{A.RST}")
+            bx.blank()
 
-        lines.append(draw_box_sep(cols))
-        lines.append(
-            draw_box_line(
-                f" {A.DIM}[1-3] Select   [B] Back   [Q] Quit{A.RST}", cols
-            )
-        )
-        lines.append(draw_box_bottom(cols))
+        bx.sep()
+        bx.line(f" {A.DIM}[1-3] Select   [B] Back   [Q] Quit{A.RST}")
+        bx.bottom()
 
-        _w("\n".join(lines) + "\n")
+        _w("\n".join(bx.out) + "\n")
         _fl()
 
         key = _read_key_blocking()
@@ -1066,9 +1014,51 @@ def tui_pick_mode() -> Optional[str]:
             return "thorough"
 
 
-class XrayDashboard:
-    """TUI dashboard for xray proxy test progress."""
+class BoxRenderer:
+    def __init__(self, width: int, color: str = A.CYN):
+        self.w = width
+        self.c = color
+        self.out: List[str] = []
 
+    def top(self):
+        self.out.append(f"{self.c}╔{'═' * self.w}╗{A.RST}")
+
+    def sep(self):
+        self.out.append(f"{self.c}╠{'═' * self.w}╣{A.RST}")
+
+    def bottom(self):
+        self.out.append(f"{self.c}╚{'═' * self.w}╝{A.RST}")
+
+    def line(self, content: str):
+        pad = " " * max(0, self.w - _vl(content))
+        self.out.append(f"{self.c}║{A.RST}{content}{pad}{self.c}║{A.RST}")
+
+    def title_line(self, left: str, right: str = ""):
+        gap = max(1, self.w - _vl(left) - _vl(right))
+        self.line(left + " " * gap + right)
+
+    def header(self, text: str):
+        self.top()
+        self.line(text)
+        self.sep()
+
+    def blank(self):
+        self.line("")
+
+
+class Component:
+    def render(self):
+        raise NotImplementedError
+
+    def draw_lines(self) -> List[str]:
+        raise NotImplementedError
+
+    def flush(self):
+        _w("\n".join(self.draw_lines()) + "\n")
+        _fl()
+
+
+class XrayDashboard(Component):
     def __init__(self, xst: XrayTestState):
         self.xst = xst
         self.sort = "score"
@@ -1081,48 +1071,48 @@ class XrayDashboard:
         f = int(w * p)
         return f"{A.GRN}{'█' * f}{A.DIM}{'░' * (w - f)}{A.RST}"
 
-    def draw(self):
-        cols, rows = term_size()
-        W = cols - 2
-        xst = self.xst
+    def _cscore(self, v: float) -> str:
+        if v >= 70:
+            return f"{A.GRN}{v:5.1f}{A.RST}"
+        if v >= 40:
+            return f"{A.YEL}{v:5.1f}{A.RST}"
+        if v > 0:
+            return f"{v:5.1f}"
+        return f"{'--':>5}"
 
-        for _v in xst.variations:
-            if _v.alive and _v.score == 0 and _v.connect_ms > 0:
-                cms = _v.connect_ms if _v.connect_ms >= 0 else 1000
-                tms = _v.ttfb_ms if _v.ttfb_ms >= 0 else 1000
-                _lat = max(0.0, 100.0 - cms / 10.0)
-                _ttfb = max(0.0, 100.0 - tms / 5.0)
-                if _v.native_tested or _v.speed_mbps < 0.01:
-                    _v.score = round(_lat * 0.55 + _ttfb * 0.45, 1)
+    def _calc_scores(self):
+        for v in self.xst.variations:
+            if v.alive and v.score == 0 and v.connect_ms > 0:
+                cms = v.connect_ms if v.connect_ms >= 0 else 1000
+                tms = v.ttfb_ms if v.ttfb_ms >= 0 else 1000
+                lat = max(0.0, 100.0 - cms / 10.0)
+                ttfb = max(0.0, 100.0 - tms / 5.0)
+                if v.native_tested or v.speed_mbps < 0.01:
+                    v.score = round(lat * 0.55 + ttfb * 0.45, 1)
                 else:
-                    _spd = min(100.0, _v.speed_mbps * 20.0)
-                    _v.score = round(_lat * 0.35 + _spd * 0.50 + _ttfb * 0.15, 1)
+                    spd = min(100.0, v.speed_mbps * 20.0)
+                    v.score = round(lat * 0.35 + spd * 0.50 + ttfb * 0.15, 1)
 
-        out: List[str] = []
-
-        def bx(c: str):
-            pad = " " * max(0, W - _vl(c))
-            out.append(f"{A.CYN}║{A.RST}{c}{pad}\033[{W + 2}G{A.CYN}║{A.RST}")
-
-        out.append(f"{A.CYN}╔{'═' * W}╗{A.RST}")
+    def draw_header(self, bx: BoxRenderer, xst: XrayTestState):
         elapsed = _fmt_elapsed(time.monotonic() - xst.start_time) if xst.start_time else "0s"
-        _pipeline = getattr(xst, 'pipeline_mode', False)
-        title = f" {A.BOLD}{A.WHT}Xray Pipeline Test{A.RST}" if _pipeline else f" {A.BOLD}{A.WHT}Xray Proxy Test{A.RST}"
+        pipeline = getattr(xst, 'pipeline_mode', False)
+        title = f" {A.BOLD}{A.WHT}Xray Pipeline Test{A.RST}" if pipeline else f" {A.BOLD}{A.WHT}Xray Proxy Test{A.RST}"
         right = f"{A.DIM}{elapsed}  |  ^C stop{A.RST}"
-        bx(title + " " * max(1, W - _vl(title) - _vl(right)) + right)
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-
+        bx.top()
+        bx.title_line(title, right)
+        bx.sep()
         src = xst.source_uri[:60] + "..." if len(xst.source_uri) > 60 else xst.source_uri
-        bx(f" {A.DIM}Config:{A.RST} {src}")
-        bx(f" {A.DIM}Variations:{A.RST} {len(xst.variations)}  "
-           f"{A.GRN}{xst.alive_count} alive{A.RST}  "
-           f"{A.RED}{xst.dead_count} dead{A.RST}")
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
+        bx.line(f" {A.DIM}Config:{A.RST} {src}")
+        bx.line(f" {A.DIM}Variations:{A.RST} {len(xst.variations)}  "
+                f"{A.GRN}{xst.alive_count} alive{A.RST}  "
+                f"{A.RED}{xst.dead_count} dead{A.RST}")
+        bx.sep()
 
-        bw = max(1, min(24, W - 50))
-        _is_pipeline = getattr(xst, 'pipeline_mode', False)
+    def draw_progress(self, bx: BoxRenderer, xst: XrayTestState):
+        bw = max(1, min(24, bx.w - 50))
+        is_pipeline = getattr(xst, 'pipeline_mode', False)
 
-        if _is_pipeline:
+        if is_pipeline:
             stage_stats = {
                 "ip_scan": f"{len(xst.live_ips)} CF confirmed" if xst.live_ips else "",
                 "base_test": (f"{len(xst.working_ips)} working" if xst.working_ips
@@ -1139,60 +1129,59 @@ class XrayDashboard:
                 stat = stage_stats.get(stage["name"], "")
                 if st == "done":
                     stat_color = A.RED if stat.startswith("0 ") else A.GRN
-                    bx(f" {A.GRN}v{A.RST} {label} {stat_color}{stat}{A.RST}")
+                    bx.line(f" {A.GRN}v{A.RST} {label} {stat_color}{stat}{A.RST}")
                 elif st == "active":
                     pct = xst.done_count * 100 // max(1, xst.total) if xst.total > 0 else 0
-                    bx(f" {A.GRN}>{A.RST} {A.BOLD}{label}{A.RST}"
-                       f"[{self._bar(xst.done_count, xst.total, bw)}] "
-                       f"{xst.done_count}/{xst.total}  {pct}%")
+                    bx.line(f" {A.GRN}>{A.RST} {A.BOLD}{label}{A.RST}"
+                            f"[{self._bar(xst.done_count, xst.total, bw)}] "
+                            f"{xst.done_count}/{xst.total}  {pct}%")
                 elif st == "interrupted":
-                    bx(f" {A.YEL}!{A.RST} {label} {A.YEL}interrupted{A.RST}")
+                    bx.line(f" {A.YEL}!{A.RST} {label} {A.YEL}interrupted{A.RST}")
                 else:
-                    bx(f" {A.DIM}o {label} waiting...{A.RST}")
-            _pf_warn = getattr(xst, 'preflight_warning', '')
-            if _pf_warn:
-                _pf_text = _pf_warn[:W - 6] if len(_pf_warn) > W - 6 else _pf_warn
-                bx(f" {A.YEL}! {_pf_text}{A.RST}")
+                    bx.line(f" {A.DIM}o {label} waiting...{A.RST}")
+            pf_warn = getattr(xst, 'preflight_warning', '')
+            if pf_warn:
+                pf_text = pf_warn[:bx.w - 6] if len(pf_warn) > bx.w - 6 else pf_warn
+                bx.line(f" {A.YEL}! {pf_text}{A.RST}")
         elif xst.finished and xst.interrupted:
             if xst.phase == "quick_filter":
-                bx(f" {A.YEL}!{A.RST} Quick Filter   {A.YEL}interrupted ({xst.alive_count} passed){A.RST}")
+                bx.line(f" {A.YEL}!{A.RST} Quick Filter   {A.YEL}interrupted ({xst.alive_count} passed){A.RST}")
             elif xst.phase == "speed_test":
                 qp = xst.quick_passed or xst.alive_count
-                bx(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
-                bx(f" {A.YEL}!{A.RST} Speed Test     {A.YEL}interrupted{A.RST}")
+                bx.line(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
+                bx.line(f" {A.YEL}!{A.RST} Speed Test     {A.YEL}interrupted{A.RST}")
             else:
-                bx(f" {A.YEL}!{A.RST} Quick Filter   {A.YEL}interrupted before starting{A.RST}")
+                bx.line(f" {A.YEL}!{A.RST} Quick Filter   {A.YEL}interrupted before starting{A.RST}")
         elif xst.finished:
             qp = xst.quick_passed or xst.alive_count
-            bx(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
+            bx.line(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
             if xst.phase == "speed_test":
-                bx(f" {A.GRN}v{A.RST} Speed Test     {A.GRN}done{A.RST}")
+                bx.line(f" {A.GRN}v{A.RST} Speed Test     {A.GRN}done{A.RST}")
         elif xst.phase == "quick_filter":
             pct = xst.done_count * 100 // max(1, xst.total)
-            bx(f" {A.GRN}>{A.RST} {A.BOLD}Quick Filter{A.RST}   [{self._bar(xst.done_count, xst.total, bw)}] "
-               f"{xst.done_count}/{xst.total}  {pct}%")
+            bx.line(f" {A.GRN}>{A.RST} {A.BOLD}Quick Filter{A.RST}   [{self._bar(xst.done_count, xst.total, bw)}] "
+                    f"{xst.done_count}/{xst.total}  {pct}%")
         elif xst.phase == "speed_test":
             qp = xst.quick_passed or xst.alive_count
-            bx(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
+            bx.line(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
             pct = xst.done_count * 100 // max(1, xst.total)
-            bx(f" {A.GRN}>{A.RST} {A.BOLD}Speed Test{A.RST}     [{self._bar(xst.done_count, xst.total, bw)}] "
-               f"{xst.done_count}/{xst.total}  {pct}%")
+            bx.line(f" {A.GRN}>{A.RST} {A.BOLD}Speed Test{A.RST}     [{self._bar(xst.done_count, xst.total, bw)}] "
+                    f"{xst.done_count}/{xst.total}  {pct}%")
         else:
-            bx(f" {A.DIM}o Quick Filter   starting...{A.RST}")
+            bx.line(f" {A.DIM}o Quick Filter   starting...{A.RST}")
 
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-
-        _multi_ip = any(v.tag.count("|") >= 2 for v in xst.variations[:3])
-        if _multi_ip:
+    def draw_table(self, bx: BoxRenderer, xst: XrayTestState, rows_visible: int):
+        multi_ip = any(v.tag.count("|") >= 2 for v in xst.variations[:3])
+        if multi_ip:
             hdr = (f" {A.BOLD}{'#':>3}  {'IP':<18} {'SNI':<20} {'Frag':>8}  "
                    f"{'Conn':>6}  {'TTFB':>6}  {'Score':>5}{A.RST}")
-            bx(hdr)
-            bx(f" {A.DIM}{'─'*3}  {'─'*18} {'─'*20} {'─'*8}  {'─'*6}  {'─'*6}  {'─'*5}{A.RST}")
+            bx.line(hdr)
+            bx.line(f" {A.DIM}{'─'*3}  {'─'*18} {'─'*20} {'─'*8}  {'─'*6}  {'─'*6}  {'─'*5}{A.RST}")
         else:
             hdr = (f" {A.BOLD}{'#':>3}  {'SNI':<26} {'Fragment':>10}  "
                    f"{'Conn':>6}  {'TTFB':>6}  {'Score':>5}{A.RST}")
-            bx(hdr)
-            bx(f" {A.DIM}{'─'*3}  {'─'*26} {'─'*10}  {'─'*6}  {'─'*6}  {'─'*5}{A.RST}")
+            bx.line(hdr)
+            bx.line(f" {A.DIM}{'─'*3}  {'─'*26} {'─'*10}  {'─'*6}  {'─'*6}  {'─'*5}{A.RST}")
 
         sorted_vars = sorted(
             xst.variations,
@@ -1202,65 +1191,71 @@ class XrayDashboard:
             ),
         )
 
-        vis = max(3, rows - 18)
-        page = sorted_vars[self.offset:self.offset + vis]
+        page = sorted_vars[self.offset:self.offset + rows_visible]
 
         for rank, v in enumerate(page, self.offset + 1):
             frag_s = "none" if v.fragment is None else v.fragment.get("length", "?")
-            if _multi_ip:
-                _parts = v.tag.split("|", 2)
-                _raw_ip = _parts[0] if len(_parts) >= 3 else ""
-                _ip_s = (_raw_ip[:16] + "..") if len(_raw_ip) > 18 else _raw_ip[:18]
+            if multi_ip:
+                parts = v.tag.split("|", 2)
+                raw_ip = parts[0] if len(parts) >= 3 else ""
+                ip_s = (raw_ip[:16] + "..") if len(raw_ip) > 18 else raw_ip[:18]
                 sni_short = v.sni[:20]
-                _name_col = f"{_ip_s:<18} {sni_short:<20} {frag_s:>8}"
+                name_col = f"{ip_s:<18} {sni_short:<20} {frag_s:>8}"
             else:
                 sni_short = v.sni[:26]
-                _name_col = f"{sni_short:<26} {frag_s:>10}"
+                name_col = f"{sni_short:<26} {frag_s:>10}"
             if not v.alive and v.error:
-                _err_s = v.error[:31] if v.error else "dead"
-                _pad = max(0, 31 - len(_err_s))
-                row = (f" {A.DIM}{rank:>3}  {_name_col}  "
-                       f"{A.RED}{_err_s}{A.RST}{A.DIM}{' '*_pad}{A.RST}")
+                err_s = v.error[:31] if v.error else "dead"
+                pad = max(0, 31 - len(err_s))
+                row = (f" {A.DIM}{rank:>3}  {name_col}  "
+                       f"{A.RED}{err_s}{A.RST}{A.DIM}{' '*pad}{A.RST}")
             elif not v.alive and not v.error and v.connect_ms <= 0 and v.score <= 0:
-                row = (f" {A.DIM}{rank:>3}  {_name_col}  "
+                row = (f" {A.DIM}{rank:>3}  {name_col}  "
                        f"{'--':>6}  {'--':>6}  {'--':>5}{A.RST}")
             else:
                 conn_s = f"{v.connect_ms:6.0f}" if v.connect_ms > 0 else f"{'--':>6}"
                 ttfb_s = f"{v.ttfb_ms:6.0f}" if v.ttfb_ms > 0 else f"{'--':>6}"
-                if v.score >= 70:
-                    sc_s = f"{A.GRN}{v.score:5.1f}{A.RST}"
-                elif v.score >= 40:
-                    sc_s = f"{A.YEL}{v.score:5.1f}{A.RST}"
-                elif v.score > 0:
-                    sc_s = f"{v.score:5.1f}"
-                else:
-                    sc_s = f"{'--':>5}"
-                row = (f" {rank:>3}  {_name_col}  "
+                sc_s = self._cscore(v.score)
+                row = (f" {rank:>3}  {name_col}  "
                        f"{conn_s}  {ttfb_s}  {sc_s}")
-            bx(row)
+            bx.line(row)
 
-        for _ in range(vis - len(page)):
-            bx("")
+        for _ in range(rows_visible - len(page)):
+            bx.blank()
 
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
+    def draw_footer(self, bx: BoxRenderer, xst: XrayTestState):
         if xst.finished:
-            if W >= 100:
+            if bx.w >= 100:
                 footer = (f" {A.CYN}[S]{A.RST} Sort  {A.CYN}[E]{A.RST} Export  "
                           f"{A.CYN}[C]{A.RST} View URI  "
                           f"{A.CYN}[J/K]{A.RST} Scroll  {A.CYN}[N/P]{A.RST} Page  "
                           f"{A.CYN}[B]{A.RST} Back  {A.CYN}[Q]{A.RST} Quit")
-                bx(footer)
+                bx.line(footer)
             else:
-                bx(f" {A.CYN}[S]{A.RST}ort {A.CYN}[E]{A.RST}xp {A.CYN}[C]{A.RST}URI {A.CYN}[B]{A.RST}ack {A.CYN}[Q]{A.RST}uit")
-                bx(f" {A.CYN}[J/K]{A.RST} Scroll  {A.CYN}[N/P]{A.RST} Page")
+                bx.line(f" {A.CYN}[S]{A.RST}ort {A.CYN}[E]{A.RST}xp {A.CYN}[C]{A.RST}URI {A.CYN}[B]{A.RST}ack {A.CYN}[Q]{A.RST}uit")
+                bx.line(f" {A.CYN}[J/K]{A.RST} Scroll  {A.CYN}[N/P]{A.RST} Page")
             if xst.export_error:
-                bx(f" {A.RED}{xst.export_error}{A.RST}")
+                bx.line(f" {A.RED}{xst.export_error}{A.RST}")
         else:
-            bx(f" {A.DIM}{xst.phase_label}  |  Press Ctrl+C to stop{A.RST}")
-        out.append(f"{A.CYN}╚{'═' * W}╝{A.RST}")
+            bx.line(f" {A.DIM}{xst.phase_label}  |  Press Ctrl+C to stop{A.RST}")
+
+    def draw(self):
+        cols, rows = term_size()
+        bx = BoxRenderer(cols - 2)
+        xst = self.xst
+        rows_visible = max(3, rows - 18)
+
+        self._calc_scores()
+        self.draw_header(bx, xst)
+        self.draw_progress(bx, xst)
+        bx.sep()
+        self.draw_table(bx, xst, rows_visible)
+        bx.sep()
+        self.draw_footer(bx, xst)
+        bx.bottom()
 
         _w(A.CLR + A.HIDE)
-        _w("\n".join(out) + "\n")
+        _w("\n".join(bx.out) + "\n")
         _fl()
 
     def handle(self, key: str) -> Optional[str]:
@@ -1745,7 +1740,7 @@ async def _tui_run_pipeline(args, cli_uri: str = ""):
     await _post_pipeline_results(xst, xdash, args)
 
 
-class Dashboard:
+class Dashboard(Component):
     def __init__(self, st: State):
         self.st = st
         self.sort = "score"
@@ -1775,53 +1770,43 @@ class Dashboard:
             return f"{A.GRN}{v:5.1f}{A.RST}"
         return f"{A.YEL}{v * 1000:4.0f}K{A.RST}"
 
-    def draw(self):
-        cols, rows = term_size()
-        W = cols - 2
-        s = self.st
-        vis = max(3, rows - 18 - len(s.rounds))
-        out: List[str] = []
-
-        def bx(c: str):
-            out.append(f"{A.CYN}║{A.RST}" + c + " " * max(0, W - _vl(c)) + f"{A.CYN}║{A.RST}")
-
-        out.append(f"{A.CYN}╔{'═' * W}╗{A.RST}")
+    def draw_header(self, bx: BoxRenderer, s: State):
         elapsed = _fmt_elapsed(time.monotonic() - s.start_time) if s.start_time else "0s"
         title = f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST}"
         right = f"{A.DIM}{elapsed}  |  {s.mode}  |  ^C stop{A.RST}"
-        bx(title + " " * max(1, W - _vl(title) - _vl(right)) + right)
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-
+        bx.top()
+        bx.title_line(title, right)
+        bx.sep()
         fname = os.path.basename(s.input_file)
         info = f" {A.DIM}File:{A.RST} {fname}   {A.DIM}Configs:{A.RST} {len(s.configs)}   {A.DIM}Unique IPs:{A.RST} {len(s.ips)}"
         if s.latency_cut_n > 0:
             info += f"   {A.DIM}Cut:{A.RST} {s.latency_cut_n}"
-        bx(info)
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
+        bx.line(info)
+        bx.sep()
 
-        bw = min(24, W - 55)
-
+    def draw_progress(self, bx: BoxRenderer, s: State):
+        bw = min(24, bx.w - 55)
         if s.phase == "latency":
             pct = s.done_count * 100 // max(1, s.total)
-            bx(f" {A.GRN}▶{A.RST} {A.BOLD}Latency{A.RST}          [{self._bar(s.done_count, s.total, bw)}] {s.done_count}/{s.total}  {pct}%")
+            bx.line(f" {A.GRN}▶{A.RST} {A.BOLD}Latency{A.RST}          [{self._bar(s.done_count, s.total, bw)}] {s.done_count}/{s.total}  {pct}%")
         elif s.alive_n > 0:
             cut_info = f"  {A.DIM}cut {s.latency_cut_n}{A.RST}" if s.latency_cut_n > 0 else ""
-            bx(f" {A.GRN}✓{A.RST} Latency          {A.GRN}{s.alive_n} alive{A.RST}  {A.DIM}{s.dead_n} dead{A.RST}{cut_info}")
+            bx.line(f" {A.GRN}✓{A.RST} Latency          {A.GRN}{s.alive_n} alive{A.RST}  {A.DIM}{s.dead_n} dead{A.RST}{cut_info}")
         else:
-            bx(f" {A.DIM}○ Latency          waiting...{A.RST}")
-
+            bx.line(f" {A.DIM}○ Latency          waiting...{A.RST}")
         for i, rc in enumerate(s.rounds):
             rn = i + 1
             lbl = f"Speed R{rn} ({rc.label}x{rc.keep})"
             if s.cur_round == rn and s.phase.startswith("speed") and not s.finished:
                 pct = s.done_count * 100 // max(1, s.total)
-                bx(f" {A.GRN}▶{A.RST} {A.BOLD}{lbl:<18}{A.RST}[{self._bar(s.done_count, s.total, bw)}] {s.done_count}/{s.total}  {pct}%")
+                bx.line(f" {A.GRN}▶{A.RST} {A.BOLD}{lbl:<18}{A.RST}[{self._bar(s.done_count, s.total, bw)}] {s.done_count}/{s.total}  {pct}%")
             elif s.cur_round > rn or (s.cur_round >= rn and s.finished):
-                bx(f" {A.GRN}✓{A.RST} {lbl:<18}{A.GRN}done{A.RST}")
+                bx.line(f" {A.GRN}✓{A.RST} {lbl:<18}{A.GRN}done{A.RST}")
             else:
-                bx(f" {A.DIM}○ {lbl:<18}waiting...{A.RST}")
+                bx.line(f" {A.DIM}○ {lbl:<18}waiting...{A.RST}")
+        bx.sep()
 
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
+    def draw_stats(self, bx: BoxRenderer, s: State):
         parts = []
         if s.alive_n > 0:
             alats = [r.tls_ms for r in s.res.values() if r.alive and r.tls_ms > 0]
@@ -1832,33 +1817,30 @@ class Dashboard:
                 parts.append(f"{A.DIM}avg latency:{A.RST} {avg_lat:.0f}ms")
             if s.best_speed > 0:
                 parts.append(f"{A.CYN}best:{A.RST} {s.best_speed:.2f} MB/s")
-        bx(" " + "   ".join(parts) if parts else " ")
+        bx.line(" " + "   ".join(parts) if parts else " ")
+        bx.sep()
 
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-
+    def draw_table(self, bx: BoxRenderer, s: State, rows_visible: int):
         hdr = f" {A.BOLD}{'#':>3}  {'IP':<16} {'Dom':>3}  {'Ping':>6}  {'Conn':>6}"
-        for i, rc in enumerate(s.rounds):
+        for i, round_cfg in enumerate(s.rounds):
             hdr += f"  {'R' + str(i + 1):>5}"
         hdr += f"  {'Colo':>4}  {'Score':>5}{A.RST}"
-        bx(hdr)
-
+        bx.line(hdr)
         sep = f" {'─' * 3}  {'─' * 16} {'─' * 3}  {'─' * 6}  {'─' * 6}"
         for _ in s.rounds:
             sep += f"  {'─' * 5}"
         sep += f"  {'─' * 4}  {'─' * 5}"
-        bx(f"{A.DIM}{sep}{A.RST}")
-
+        bx.line(f"{A.DIM}{sep}{A.RST}")
         results = sorted_all(s, self.sort)
         total_results = len(results)
-        page = results[self.offset : self.offset + vis]
-
+        page = results[self.offset : self.offset + rows_visible]
         for rank, r in enumerate(page, self.offset + 1):
             if not r.alive:
                 row = f" {A.DIM}{rank:>3}  {r.ip:<16} {len(r.domains):>3}  {A.RED}{'dead':>6}{A.RST}{A.DIM}  {'':>6}"
                 for j in range(len(s.rounds)):
                     row += f"  {'':>5}"
                 row += f"  {'':>4}  {A.RED}{'--':>5}{A.RST}"
-                bx(row)
+                bx.line(row)
                 continue
             tcp = f"{r.tcp_ms:6.0f}" if r.tcp_ms > 0 else f"{A.DIM}     -{A.RST}"
             tls = f"{r.tls_ms:6.0f}" if r.tls_ms > 0 else f"{A.DIM}     -{A.RST}"
@@ -1873,18 +1855,18 @@ class Dashboard:
             else:
                 cl = f"{A.DIM}   -{A.RST}"
             row += f"  {cl}  {self._cscore(r.score)}"
-            bx(row)
+            bx.line(row)
+        for _ in range(rows_visible - len(page)):
+            bx.blank()
+        bx.sep()
+        return total_results
 
-        for _ in range(vis - len(page)):
-            bx("")
-
-        out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-
+    def draw_footer(self, bx: BoxRenderer, s: State, total_results: int, rows_visible: int):
         if s.notify and time.monotonic() < s.notify_until:
-            bx(f" {A.GRN}{A.BOLD}{s.notify}{A.RST}")
+            bx.line(f" {A.GRN}{A.BOLD}{s.notify}{A.RST}")
         elif s.finished:
             sort_hint = f"sort:{A.BOLD}{self.sort}{A.RST}"
-            page_hint = f"{self.offset + 1}-{min(self.offset + vis, total_results)}/{total_results}"
+            page_hint = f"{self.offset + 1}-{min(self.offset + rows_visible, total_results)}/{total_results}"
             ft = (
                 f" {A.CYN}[S]{A.RST} {sort_hint}  "
                 f"{A.CYN}[E]{A.RST} Export  "
@@ -1899,72 +1881,82 @@ class Dashboard:
                 f"{A.CYN}[B]{A.RST} Back  "
                 f"{A.CYN}[Q]{A.RST} Quit"
             )
-            bx(ft)
-            bx(ft2)
+            bx.line(ft)
+            bx.line(ft2)
         else:
-            bx(f" {A.DIM}{s.phase_label}...  Press Ctrl+C to stop and export partial results{A.RST}")
+            bx.line(f" {A.DIM}{s.phase_label}...  Press Ctrl+C to stop and export partial results{A.RST}")
+        bx.bottom()
 
-        out.append(f"{A.CYN}╚{'═' * W}╝{A.RST}")
+    def draw(self):
+        cols, rows = term_size()
+        width = cols - 2
+        bx = BoxRenderer(width)
+        s = self.st
+        rows_visible = max(3, rows - 18 - len(s.rounds))
+
+        self.draw_header(bx, s)
+        self.draw_progress(bx, s)
+        self.draw_stats(bx, s)
+        total_results = self.draw_table(bx, s, rows_visible)
+        self.draw_footer(bx, s, total_results, rows_visible)
 
         _w(A.HOME)
-        _w("\n".join(out) + "\n")
+        _w("\n".join(bx.out) + "\n")
         _fl()
 
-    def draw_domain_popup(self, r: Result):
+    def _popup_box(self, title: str) -> BoxRenderer:
+        cols, _ = term_size()
+        bx = BoxRenderer(cols - 2)
         _w(A.CLR)
-        cols, rows = term_size()
-        vis = min(len(r.domains), rows - 10)
-        lines = []
-        lines.append(f"{A.CYN}╔{'═' * (cols - 2)}╗{A.RST}")
-        lines.append(draw_box_line(f" {A.BOLD}Domains for {r.ip}  ({len(r.domains)} total){A.RST}", cols))
-        ping_s = f"{r.tcp_ms:.0f}ms" if r.tcp_ms > 0 else "-"
-        conn_s = f"{r.tls_ms:.0f}ms" if r.tls_ms > 0 else "-"
-        lines.append(draw_box_line(f" {A.DIM}Score: {r.score:.1f}  |  Ping: {ping_s}  |  Conn: {conn_s}{A.RST}", cols))
-        lines.append(draw_box_sep(cols))
-        for d in r.domains[:vis]:
-            lines.append(draw_box_line(f"  {d}", cols))
-        if len(r.domains) > vis:
-            lines.append(draw_box_line(f"  {A.DIM}...and {len(r.domains) - vis} more{A.RST}", cols))
-        lines.append(draw_box_sep(cols))
-        lines.append(draw_box_line(f" {A.DIM}Press any key to go back{A.RST}", cols))
-        lines.append(draw_box_bottom(cols))
-        _w("\n".join(lines) + "\n")
+        bx.top()
+        bx.line(f" {A.BOLD}{title}{A.RST}")
+        bx.sep()
+        return bx
+
+    def _finish_popup(self, bx: BoxRenderer):
+        bx.sep()
+        bx.line(f" {A.DIM}Press any key to go back{A.RST}")
+        bx.bottom()
+        _w("\n".join(bx.out) + "\n")
         _fl()
         _wait_any_key()
         _w(A.CLR)
 
-    def draw_config_popup(self, r: Result):
-        _w(A.CLR)
+    def draw_domain_popup(self, r: Result):
         cols, rows = term_size()
-        lines = []
-        lines.append(f"{A.CYN}╔{'═' * (cols - 2)}╗{A.RST}")
-        lines.append(draw_box_line(f" {A.BOLD}Configs for {r.ip}  ({len(r.uris)} URIs){A.RST}", cols))
+        vis = min(len(r.domains), rows - 10)
+        bx = self._popup_box(f"Domains for {r.ip}  ({len(r.domains)} total)")
+        ping_s = f"{r.tcp_ms:.0f}ms" if r.tcp_ms > 0 else "-"
+        conn_s = f"{r.tls_ms:.0f}ms" if r.tls_ms > 0 else "-"
+        bx.line(f" {A.DIM}Score: {r.score:.1f}  |  Ping: {ping_s}  |  Conn: {conn_s}{A.RST}")
+        bx.sep()
+        for d in r.domains[:vis]:
+            bx.line(f"  {d}")
+        if len(r.domains) > vis:
+            bx.line(f"  {A.DIM}...and {len(r.domains) - vis} more{A.RST}")
+        self._finish_popup(bx)
+
+    def draw_config_popup(self, r: Result):
+        cols, rows = term_size()
+        bx = self._popup_box(f"Configs for {r.ip}  ({len(r.uris)} URIs)")
         ping_s = f"{r.tcp_ms:.0f}ms" if r.tcp_ms > 0 else "-"
         conn_s = f"{r.tls_ms:.0f}ms" if r.tls_ms > 0 else "-"
         speed_s = f"{r.best_mbps:.1f} MB/s" if r.best_mbps > 0 else "-"
-        lines.append(draw_box_line(
-            f" {A.DIM}Score: {r.score:.1f}  |  Ping: {ping_s}  |  Conn: {conn_s}  |  Speed: {speed_s}{A.RST}", cols
-        ))
-        lines.append(draw_box_sep(cols))
+        bx.line(f" {A.DIM}Score: {r.score:.1f}  |  Ping: {ping_s}  |  Conn: {conn_s}  |  Speed: {speed_s}{A.RST}")
+        bx.sep()
         if r.uris:
             max_show = rows - 10
             for i, uri in enumerate(r.uris[:max_show]):
                 tag = f" {A.CYN}{i+1}.{A.RST} "
                 max_uri = cols - 8
                 display = uri if len(uri) <= max_uri else uri[:max_uri - 3] + "..."
-                lines.append(draw_box_line(f"{tag}{A.GRN}{display}{A.RST}", cols))
+                bx.line(f"{tag}{A.GRN}{display}{A.RST}")
             if len(r.uris) > max_show:
-                lines.append(draw_box_line(f"  {A.DIM}...and {len(r.uris) - max_show} more{A.RST}", cols))
+                bx.line(f"  {A.DIM}...and {len(r.uris) - max_show} more{A.RST}")
         else:
-            lines.append(draw_box_line(f"  {A.DIM}No VLESS/VMess URIs stored for this IP{A.RST}", cols))
-            lines.append(draw_box_line(f"  {A.DIM}(only available when loaded from URIs or subscriptions){A.RST}", cols))
-        lines.append(draw_box_sep(cols))
-        lines.append(draw_box_line(f" {A.DIM}Press any key to go back{A.RST}", cols))
-        lines.append(draw_box_bottom(cols))
-        _w("\n".join(lines) + "\n")
-        _fl()
-        _wait_any_key()
-        _w(A.CLR)
+            bx.line(f"  {A.DIM}No VLESS/VMess URIs stored for this IP{A.RST}")
+            bx.line(f"  {A.DIM}(only available when loaded from URIs or subscriptions){A.RST}")
+        self._finish_popup(bx)
 
     def draw_help_popup(self):
         _w(A.CLR)
@@ -2012,7 +2004,6 @@ class Dashboard:
         lines.append(f"  {A.DIM}  https://github.com/SamNet-dev/cfray{A.RST}")
         lines.append(f"  {A.CYN}{'=' * W}{A.RST}")
         lines.append(f"  {A.DIM}Press any key to go back{A.RST}")
-
         _w("\n".join(lines) + "\n")
         _fl()
         _wait_any_key()

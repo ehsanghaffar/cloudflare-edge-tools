@@ -69,7 +69,8 @@ from src.config_parse import (_infer_orig_sni, fetch_sub, generate_from_template
                               parse_vmess_full)
 from src.models import (CleanScanState, ConfigEntry, DeployState,
                         PipelineConfig, Result, RoundCfg, State,
-                        XrayTestState, XrayVariation)
+                        XrayTestState, XrayVariation,
+                        calc_scores, sorted_alive, sorted_all)
 from src.rate_limiter import CFRateLimiter
 from src.speed_test import download_single, latency_test, phase1, phase2_round
 from src.tui import (Dashboard, XrayDashboard, _clean_pick_mode, _clean_show_results,
@@ -77,9 +78,9 @@ from src.tui import (Dashboard, XrayDashboard, _clean_pick_mode, _clean_show_res
                      _help_deploy, _help_getting_started, _help_scan_modes,
                      _help_show_page, _help_worker_proxy, _help_xray_test,
                      _post_pipeline_results, _refresh_loop, _run_pipeline_core,
-                     _tui_prompt_text, _tui_run_pipeline, calc_scores, draw_box_bottom,
+                     _tui_prompt_text, _tui_run_pipeline, draw_box_bottom,
                      draw_box_line, draw_box_sep, draw_menu_header, find_config_files,
-                     sorted_alive, sorted_all, tui_pick_file, tui_pick_mode,
+                     tui_pick_file, tui_pick_mode,
                      tui_pipeline_input, tui_run_clean_finder, tui_show_guide,
                      xray_save_results, _results_path)
 from src.xray_utils import (_build_uri, _extract_vless_ws_params, _find_free_ports,
@@ -333,77 +334,77 @@ async def _tui_worker_proxy(args):
 def save_csv(st: State, path: str, sort_by: str = "score"):
     results = sorted_alive(st, sort_by)
     with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        hdr = ["Rank", "IP", "Domains", "Domain_Count", "Ping_ms", "Conn_ms", "TTFB_ms"]
+        writer = csv.writer(f)
+        headers = ["Rank", "IP", "Domains", "Domain_Count", "Ping_ms", "Conn_ms", "TTFB_ms"]
         for i, rc in enumerate(st.rounds):
-            hdr.append(f"R{i + 1}_{rc.label}_MBps")
-        hdr += ["Best_MBps", "Colo", "Score", "Error"]
-        w.writerow(hdr)
-        for rank, r in enumerate(results, 1):
+            headers.append(f"R{i + 1}_{rc.label}_MBps")
+        headers += ["Best_MBps", "Colo", "Score", "Error"]
+        writer.writerow(headers)
+        for rank, result in enumerate(results, 1):
             row = [
-                rank, r.ip,
-                "|".join(r.domains[:5]), len(r.domains),
-                f"{r.tcp_ms:.1f}" if r.tcp_ms > 0 else "",
-                f"{r.tls_ms:.1f}" if r.tls_ms > 0 else "",
-                f"{r.ttfb_ms:.1f}" if r.ttfb_ms > 0 else "",
+                rank, result.ip,
+                "|".join(result.domains[:5]), len(result.domains),
+                f"{result.tcp_ms:.1f}" if result.tcp_ms > 0 else "",
+                f"{result.tls_ms:.1f}" if result.tls_ms > 0 else "",
+                f"{result.ttfb_ms:.1f}" if result.ttfb_ms > 0 else "",
             ]
             for i in range(len(st.rounds)):
                 row.append(
-                    f"{r.speeds[i]:.3f}"
-                    if i < len(r.speeds) and r.speeds[i] > 0
+                    f"{result.speeds[i]:.3f}"
+                    if i < len(result.speeds) and result.speeds[i] > 0
                     else ""
                 )
             row += [
-                f"{r.best_mbps:.3f}" if r.best_mbps > 0 else "",
-                r.colo, f"{r.score:.1f}", r.error,
+                f"{result.best_mbps:.3f}" if result.best_mbps > 0 else "",
+                result.colo, f"{result.score:.1f}", result.error,
             ]
-            w.writerow(row)
+            writer.writerow(row)
 
 
 def save_configs(st: State, path: str, top: int = 50, sort_by: str = "score"):
     """Save top configs. Use top=0 for ALL configs sorted best to worst."""
     results = sorted_alive(st, sort_by)
-    has_uris = any(r.uris for r in results)
+    has_uris = any(result.uris for result in results)
     limit = top if top > 0 else len(results)
     with open(path, "w", encoding="utf-8") as f:
-        n = 0
-        for r in results:
-            if n >= limit:
+        count = 0
+        for result in results:
+            if count >= limit:
                 break
             if has_uris:
-                for uri in r.uris:
+                for uri in result.uris:
                     f.write(uri + "\n")
-                    n += 1
-                    if n >= limit:
+                    count += 1
+                    if count >= limit:
                         break
             else:
-                doms = ", ".join(r.domains[:3])
-                extra = f" (+{len(r.domains) - 3} more)" if len(r.domains) > 3 else ""
-                f.write(f"{r.ip}  # score={r.score:.1f} domains={doms}{extra}\n")
-                n += 1
+                domains = ", ".join(result.domains[:3])
+                extra = f" (+{len(result.domains) - 3} more)" if len(result.domains) > 3 else ""
+                f.write(f"{result.ip}  # score={result.score:.1f} domains={domains}{extra}\n")
+                count += 1
 
 
 def save_all_configs_sorted(st: State, path: str, sort_by: str = "score"):
     """Save ALL raw configs (every URI) sorted by their IP's score, best to worst."""
     results = sorted_alive(st, sort_by)
-    dead = [r for r in st.res.values() if not r.alive]
-    has_uris = any(r.uris for r in results)
+    dead = [result for result in st.res.values() if not result.alive]
+    has_uris = any(result.uris for result in results)
     with open(path, "w", encoding="utf-8") as f:
-        for r in results:
+        for result in results:
             if has_uris:
-                for uri in r.uris:
+                for uri in result.uris:
                     f.write(uri + "\n")
             else:
-                doms = ", ".join(r.domains[:3])
-                extra = f" (+{len(r.domains) - 3} more)" if len(r.domains) > 3 else ""
-                f.write(f"{r.ip}  # score={r.score:.1f} domains={doms}{extra}\n")
-        for r in dead:
+                domains = ", ".join(result.domains[:3])
+                extra = f" (+{len(result.domains) - 3} more)" if len(result.domains) > 3 else ""
+                f.write(f"{result.ip}  # score={result.score:.1f} domains={domains}{extra}\n")
+        for result in dead:
             if has_uris:
-                for uri in r.uris:
+                for uri in result.uris:
                     f.write(uri + "\n")
             else:
-                doms = ", ".join(r.domains[:3])
-                f.write(f"{r.ip}  # DEAD domains={doms}\n")
+                domains = ", ".join(result.domains[:3])
+                f.write(f"{result.ip}  # DEAD domains={domains}\n")
 
 
 def do_export(st: State, base_path: str, sort_by: str = "score", top: int = 50,
@@ -424,24 +425,24 @@ def do_export(st: State, base_path: str, sort_by: str = "score", top: int = 50,
     return csv_path, cfg_path, full_path
 
 
-async def _resolve(e: ConfigEntry, sem: asyncio.Semaphore, counter: List[int]) -> ConfigEntry:
-    if e.ip:
+async def _resolve(entry: ConfigEntry, semaphore: asyncio.Semaphore, counter: List[int]) -> ConfigEntry:
+    if entry.ip:
         counter[0] += 1
-        return e
-    async with sem:
+        return entry
+    async with semaphore:
         try:
             loop = asyncio.get_running_loop()
-            info = await loop.getaddrinfo(e.address, 443, family=socket.AF_INET)
+            info = await loop.getaddrinfo(entry.address, 443, family=socket.AF_INET)
             if info:
-                e.ip = info[0][4][0]
+                entry.ip = info[0][4][0]
         except Exception:
-            e.ip = ""
+            entry.ip = ""
         counter[0] += 1
-    return e
+    return entry
 
 
 async def resolve_all(st: State, workers: int = 100):
-    sem = asyncio.Semaphore(workers)
+    semaphore = asyncio.Semaphore(workers)
     counter = [0]
     total = len(st.configs)
 
@@ -455,28 +456,28 @@ async def resolve_all(st: State, workers: int = 100):
             _fl()
             i += 1
             await asyncio.sleep(0.15)
-        _w(f"\r  {A.GRN}OK{A.RST} Resolved {total} domains -> {len(set(c.ip for c in st.configs if c.ip))} unique IPs\n")
+        _w(f"\r  {A.GRN}OK{A.RST} Resolved {total} domains -> {len(set(config.ip for config in st.configs if config.ip))} unique IPs\n")
         _fl()
 
     prog_task = asyncio.create_task(_progress())
     try:
-        st.configs = list(await asyncio.gather(*[_resolve(c, sem, counter) for c in st.configs]))
+        st.configs = list(await asyncio.gather(*[_resolve(config, semaphore, counter) for config in st.configs]))
     finally:
         prog_task.cancel()
         try:
             await prog_task
         except asyncio.CancelledError:
             pass
-    for c in st.configs:
-        if c.ip:
-            st.ip_map[c.ip].append(c)
+    for config in st.configs:
+        if config.ip:
+            st.ip_map[config.ip].append(config)
     st.ips = list(st.ip_map.keys())
     for ip in st.ips:
         config_entries = st.ip_map[ip]
         st.res[ip] = Result(
             ip=ip,
-            domains=[c.address for c in config_entries],
-            uris=[c.original_uri for c in config_entries if c.original_uri],
+            domains=[config.address for config in config_entries],
+            uris=[config.original_uri for config in config_entries if config.original_uri],
         )
 
 
@@ -492,11 +493,11 @@ async def run_scan(st: State, workers: int, speed_workers: int, timeout: float, 
     if not st.ips and st.configs:
         seen = set()
         st.ip_map.clear()
-        for c in st.configs:
-            ip = (c.ip if c.ip else c.address).strip()
+        for config in st.configs:
+            ip = (config.ip if config.ip else config.address).strip()
             if not ip:
                 continue
-            st.ip_map[ip].append(c)
+            st.ip_map[ip].append(config)
             if ip not in seen:
                 seen.add(ip)
                 st.ips.append(ip)
@@ -510,7 +511,7 @@ async def run_scan(st: State, workers: int, speed_workers: int, timeout: float, 
         return
     preset = PRESETS.get(st.mode, PRESETS["normal"])
     alive = sorted(
-        (ip for ip, r in st.res.items() if r.alive),
+        (ip for ip, result in st.res.items() if result.alive),
         key=lambda ip: st.res[ip].tls_ms,
     )
     cut_pct = preset.get("latency_cut", 0)
