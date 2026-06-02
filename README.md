@@ -29,6 +29,9 @@ python3 main.py -i config.txt
 python3 main.py -i config.txt --no-tui
 ```
 
+- screenshot of TUI in action
+![TUI Screenshot](docs/screenshot.png)
+
 ## Project Structure
 
 ```
