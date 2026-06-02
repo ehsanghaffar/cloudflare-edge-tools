@@ -46,6 +46,7 @@ from src.utils import (
     term_size,
     _char_width,
     _vl,
+    _results_path,
 )
 from src.xray_utils import (
     build_vless_uri,
@@ -53,7 +54,7 @@ from src.xray_utils import (
     xray_install,
     _build_uri,
 )
-from src.tui import _results_path, _tui_prompt_text
+from src.tui import _tui_prompt_text
 
 
 def deploy_check_prerequisites() -> Tuple[bool, str]:

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import csv
 import glob
@@ -53,6 +54,7 @@ from src.utils import (
     _wait_any_key,
     enable_ansi,
     term_size,
+    _results_path,
 )
 from src.xray_utils import (
     _xray_calc_scores,
@@ -61,11 +63,6 @@ from src.xray_utils import (
     xray_install,
     xray_pipeline_test,
 )
-
-
-def _results_path(filename: str) -> str:
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    return os.path.join(RESULTS_DIR, filename)
 
 
 def find_config_files() -> List[Tuple[str, str, int]]:
