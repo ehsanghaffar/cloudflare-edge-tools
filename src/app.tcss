@@ -1,0 +1,142 @@
+/* Nord-inspired modern theme */
+$surface: #2e3440;
+$background: #242933;
+$accent: #88c0d0;
+$success: #a3be8c;
+$warning: #ebcb8b;
+$error: #bf616a;
+$text: #eceff4;
+$text-dim: #d8dee9;
+
+CfrayApp {
+    background: $background;
+    color: $text;
+}
+
+Header {
+    background: $surface;
+    color: $accent;
+    height: 1;
+    content-align: center middle;
+    text-style: bold;
+}
+
+Footer {
+    background: $surface;
+    color: $text-dim;
+}
+
+#main-container {
+    width: 100%;
+    height: 1fr;
+}
+
+/* Split Pane Base */
+.pane-left {
+    width: 25%;
+    height: 100%;
+    background: $surface;
+    border-right: solid $background;
+    padding: 0 1;
+}
+
+.pane-right {
+    width: 75%;
+    height: 100%;
+    padding: 0 1;
+}
+
+/* Typography & Headers */
+.section-title {
+    text-style: bold;
+    color: $accent;
+    margin: 1 0;
+    width: 100%;
+    text-align: center;
+    background: $background;
+}
+
+/* Compact Widgets */
+DataTable {
+    height: 1fr;
+    border: none;
+}
+
+DataTable > .datatable--header {
+    background: $surface;
+    color: $accent;
+    text-style: bold;
+}
+
+ListView {
+    background: transparent;
+    border: none;
+}
+
+ListItem {
+    padding: 0 1;
+}
+
+ListItem.-highlight {
+    background: $accent;
+    color: $background;
+}
+
+/* Activity Log / Cards */
+.card {
+    background: $surface;
+    padding: 1;
+    margin-bottom: 1;
+    height: auto;
+}
+
+.stat-label {
+    color: $text-dim;
+}
+
+.stat-value {
+    color: $accent;
+    text-style: bold;
+}
+
+/* Form elements */
+Input {
+    border: none;
+    background: $surface;
+    margin-bottom: 1;
+}
+
+Input:focus {
+    border: none;
+    background: $background;
+    color: $accent;
+}
+
+Button {
+    width: 100%;
+    border: none;
+    height: 1;
+    margin-bottom: 1;
+}
+
+Button:hover {
+    background: $accent;
+    color: $background;
+}
+
+ProgressBar {
+    width: 100%;
+    height: 1;
+    margin: 1 0;
+}
+
+.hidden {
+    display: none;
+}
+
+/* Helper classes */
+.bold { text-style: bold; }
+.dim { color: $text-dim; }
+.success { color: $success; }
+.warning { color: $warning; }
+.error { color: $error; }

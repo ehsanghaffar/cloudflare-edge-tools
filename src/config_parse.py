@@ -60,8 +60,31 @@ def parse_vmess(uri: str) -> Optional[ConfigEntry]:
     return ConfigEntry(address=address, name=name, original_uri=uri.strip())
 
 
+def parse_trojan(uri: str) -> Optional[ConfigEntry]:
+    uri = uri.strip()
+    if not uri.startswith("trojan://"):
+        return None
+    rest = uri[9:]
+    name = ""
+    if "#" in rest:
+        rest, name = rest.rsplit("#", 1)
+        name = urllib.parse.unquote(name)
+    if "?" in rest:
+        rest = rest.split("?", 1)[0]
+    if "@" not in rest:
+        return None
+    _, addr = rest.split("@", 1)
+    if addr.startswith("["):
+        if "]" not in addr:
+            return None
+        address = addr[1 : addr.index("]")]
+    else:
+        address = addr.rsplit(":", 1)[0]
+    return ConfigEntry(address=address, name=name, original_uri=uri.strip())
+
+
 def parse_config(uri: str) -> Optional[ConfigEntry]:
-    return parse_vless(uri) or parse_vmess(uri)
+    return parse_vless(uri) or parse_vmess(uri) or parse_trojan(uri)
 
 
 def _infer_orig_sni(parsed: dict) -> str:

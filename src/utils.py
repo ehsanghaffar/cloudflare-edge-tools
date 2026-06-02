@@ -7,9 +7,14 @@ from typing import Optional, Tuple
 import termios
 import tty
 
-from src.constants import A, DEBUG_LOG, LOG_MAX_BYTES
+from src.constants import A, DEBUG_LOG, LOG_MAX_BYTES, RESULTS_DIR
 
 _ansi_re = re.compile(r"\033\[[^m]*m")
+
+
+def _results_path(filename: str) -> str:
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    return os.path.join(RESULTS_DIR, filename)
 
 
 def _dbg(msg: str):
