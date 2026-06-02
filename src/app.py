@@ -23,20 +23,42 @@ def find_config_files():
             results.append(path)
     return sorted(list(set(results)))
 
+BANNER = """
+   ▄████████  ▄█        ▄██████▄   ███    █▄  ████████▄     ▄████████  ▄█          ▄████████    ▄████████    ▄████████ 
+  ███    ███ ███       ███    ███  ███    ███ ███    ███   ███    ███ ███         ███    ███   ███    ███   ███    ███ 
+  ███    █▀  ███       ███    ███  ███    ███ ███    ███   ███    █▀  ███         ███    ███   ███    ███   ███    █▀  
+ ▄███▄▄▄     ███       ███    ███  ███    ███ ███    ███  ▄███▄▄▄     ███         ███    ███  ▄███▄▄▄▄██▀  ▄███▄▄▄     
+▀▀███▀▀▀     ███       ███    ███  ███    ███ ███    ███ ▀▀███▀▀▀     ███       ▀███████████ ▀▀███▀▀▀▀▀   ▀▀███▀▀▀     
+  ███        ███       ███    ███  ███    ███ ███    ███   ███    █▄  ███         ███    ███ ▀███████████   ███    █▄  
+  ███        ███▄▄▄▄█  ███    ███  ███    ███ ███    ███   ███    ███ ███▄▄▄▄█    ███    ███   ███    ███   ███    ███ 
+  ▀          ▀▀▀▀▀▀▀▀   ▀██████▀   ▀██████▀▀  ████████▀    ██████████ ▀▀▀▀▀▀▀▀    █▀     █▀    ███    ███   ██████████ 
+                                                                                               ▀      ▀                
+                     ▄████████  ▄██████▄     ▄████████  ███▄▄▄▄      ███▄▄▄▄      ▄████████    ▄████████ 
+                    ███    ███ ███    ███   ███    ███  ███▀▀▀██▄    ███▀▀▀██▄   ███    ███   ███    ███ 
+                    ███    █▀  ███    ███   ███    █▀   ███   ███    ███   ███   ███    █▀    ███    ███ 
+                    ███        ███    ███  ▄███▄▄▄      ███   ███    ███   ███  ▄███▄▄▄      ▄███▄▄▄▄██▀ 
+                  ▀███████████ ███    ███ ▀▀███▀▀▀      ███   ███    ███   ███ ▀▀███▀▀▀     ▀▀███▀▀▀▀▀   
+                           ███ ███    ███   ███    █▄   ███   ███    ███   ███   ███    █▄  ▀███████████ 
+                     ▄█    ███ ███    ███   ███    ███  ███   ███    ███   ███   ███    ███   ███    ███ 
+                     ████████▀  ▀██████▀    ██████████   ▀█   █▀      ▀█   █▀    ██████████   ███    ███ 
+                                                                                              ▀      ▀ 
+"""
+
 class Dashboard(Static):
     def compose(self) -> ComposeResult:
+        yield Static(BANNER, id="dash-banner")
         with Horizontal():
             with Vertical(classes="pane-left"):
-                yield Label("SYSTEM OVERVIEW", classes="section-title")
+                yield Label("⚡ NETWORK OVERVIEW", classes="section-title")
                 with Vertical(classes="card"):
                     yield Label("Configs Loaded: [b]0[/]", id="dash-configs")
                     yield Label("Clean IPs: [b]0[/]", id="dash-clean")
                     yield Label("Avg Latency: [b]-[/]", id="dash-latency")
-                yield Label("QUICK ACTIONS", classes="section-title")
+                yield Label("🛠️ SYSTEM CONTROL", classes="section-title")
                 yield Button("Update CF Subnets", id="btn-subnet-update", variant="primary")
-                yield Button("Clean Temp Files", id="btn-clean-temp")
+                yield Button("Flush Temp Files", id="btn-clean-temp")
             with Vertical(classes="pane-right"):
-                yield Label("ACTIVITY LOG", classes="section-title")
+                yield Label("📜 OPERATIONAL ACTIVITY", classes="section-title")
                 yield ListView(id="activity-log")
 
 class ScannerView(Static):

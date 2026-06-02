@@ -8,26 +8,29 @@ $error: #bf616a;
 $text: #eceff4;
 $text-dim: #d8dee9;
 
-CFEdgeApp {
+CfrayApp {
     background: $background;
     color: $text;
+    padding: 1 2;
 }
 
 Header {
     background: $surface;
     color: $accent;
-    height: 1;
+    height: 3;
     content-align: center middle;
     text-style: bold;
+    border-bottom: tall $accent;
+    margin-bottom: 1;
 }
 
 Footer {
-    background: $surface;
+    background: transparent;
     color: $text-dim;
+    margin-top: 1;
 }
 
-#main-container {
-    width: 100%;
+#main-switcher {
     height: 1fr;
 }
 
@@ -82,12 +85,26 @@ ListItem.-highlight {
     color: $background;
 }
 
-/* Activity Log / Cards */
+/* Enhanced Cards */
 .card {
     background: $surface;
-    padding: 1;
+    border: solid $accent;
+    padding: 1 2;
     margin-bottom: 1;
     height: auto;
+}
+
+.card:hover {
+    border: double $accent;
+}
+
+#dash-banner {
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+    color: $accent;
+    margin-bottom: 1;
+    text-style: bold;
 }
 
 .stat-label {
