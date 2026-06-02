@@ -1,44 +1,58 @@
-import asyncio
 import copy
 import http.client
 import ipaddress
 import json
 import os
-import random
 import re
-import secrets
 import shutil
 import socket
-import stat
-import string
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.request
 import uuid
-import zipfile
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-from src.constants import (A, ANSI, RESULTS_DIR, VERSION, XRAY_BIN_DIR,
-                           XRAY_CONFIG_TEMPLATE, XRAY_CONNECT_TIMEOUT,
-                           XRAY_HOME, XRAY_PROFILES_DIR, XRAY_BASE_PORT,
-                           DEBUG_LOG, SPEED_HOST,
-                           DEPLOY_XRAY_BIN, DEPLOY_XRAY_CONFIG,
-                           DEPLOY_XRAY_CONFIG_DIR, DEPLOY_XRAY_SERVICE,
-                           DEPLOY_XRAY_SHARE, DEPLOY_XRAY_BACKUP_DIR,
-                           DEPLOY_SYSTEMD_UNIT)
-from src.config_parse import (parse_config, parse_vless_full, parse_vmess_full,
-                              load_addresses, generate_from_template,
-                              load_input, fetch_sub, parse_rounds_str, parse_size)
-from src.models import (ConfigEntry, DeployState, PipelineConfig, RoundCfg,
-                        Result, State, XrayTestState)
-from src.utils import (_dbg, _fmt_elapsed, _prompt_number,
-                       _read_key_blocking, _read_key_nb, _w, _fl,
-                       _restore_console_input, _wait_any_key, term_size,
-                       _char_width, _vl)
-from src.xray_utils import (build_vless_uri, build_vmess_uri, xray_find_binary,
-                            xray_install, XrayProcess, _build_uri)
+from src.constants import (
+    A,
+    ANSI,
+    RESULTS_DIR,
+    XRAY_BIN_DIR,
+    XRAY_HOME,
+    DEBUG_LOG,
+    SPEED_HOST,
+    DEPLOY_XRAY_BIN,
+    DEPLOY_XRAY_CONFIG,
+    DEPLOY_XRAY_CONFIG_DIR,
+    DEPLOY_XRAY_SERVICE,
+    DEPLOY_XRAY_SHARE,
+    DEPLOY_XRAY_BACKUP_DIR,
+    DEPLOY_SYSTEMD_UNIT,
+)
+from src.config_parse import (
+    parse_vless_full,
+    parse_vmess_full,
+    load_input,
+)
+from src.models import (
+    DeployState,
+)
+from src.utils import (
+    _dbg,
+    _read_key_blocking,
+    _w,
+    _fl,
+    _wait_any_key,
+    term_size,
+    _char_width,
+    _vl,
+)
+from src.xray_utils import (
+    build_vless_uri,
+    xray_find_binary,
+    xray_install,
+    _build_uri,
+)
 from src.tui import _results_path, _tui_prompt_text
 
 
@@ -58,7 +72,11 @@ def deploy_check_prerequisites() -> Tuple[bool, str]:
 
 def deploy_detect_server_ip() -> str:
     """Detect server's public IP by querying external services."""
-    for url in ("https://ifconfig.me/ip", "https://api.ipify.org", "https://icanhazip.com"):
+    for url in (
+        "https://ifconfig.me/ip",
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+    ):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "curl/7.0"})
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -104,7 +122,10 @@ def deploy_generate_reality_keys(xray_bin: str) -> Tuple[str, str]:
             kw["creationflags"] = 0x08000000
         result = subprocess.run(
             [xray_bin, "x25519"],
-            capture_output=True, text=True, timeout=10, **kw,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            **kw,
         )
         if result.returncode != 0:
             return "", ""
@@ -161,10 +182,12 @@ def _build_single_inbound(parsed: dict, ds: "DeployState", index: int) -> dict:
         except (ValueError, TypeError):
             alter_id = 0
         inbound["settings"] = {
-            "clients": [{
-                "id": uuid_val,
-                "alterId": alter_id,
-            }],
+            "clients": [
+                {
+                    "id": uuid_val,
+                    "alterId": alter_id,
+                }
+            ],
         }
     else:  # vless
         client: dict = {"id": uuid_val}
@@ -194,10 +217,13 @@ def _build_single_inbound(parsed: dict, ds: "DeployState", index: int) -> dict:
         }
     elif sec == "tls":
         tls_settings: dict = {
-            "certificates": [{
-                "certificateFile": ds.tls_cert_path or "/usr/local/etc/xray/cert.pem",
-                "keyFile": ds.tls_key_path or "/usr/local/etc/xray/key.pem",
-            }],
+            "certificates": [
+                {
+                    "certificateFile": ds.tls_cert_path
+                    or "/usr/local/etc/xray/cert.pem",
+                    "keyFile": ds.tls_key_path or "/usr/local/etc/xray/key.pem",
+                }
+            ],
         }
         alpn = parsed.get("alpn", "")
         if alpn:
@@ -269,7 +295,9 @@ def build_server_config(ds: "DeployState") -> dict:
     return config
 
 
-def build_client_uri_for_server(parsed: dict, ds: "DeployState", tag: str, index: int = 0) -> str:
+def build_client_uri_for_server(
+    parsed: dict, ds: "DeployState", tag: str, index: int = 0
+) -> str:
     """Build a client URI pointing to the deployed server."""
     p = copy.copy(parsed)
     p["address"] = ds.server_ip
@@ -287,8 +315,13 @@ def build_client_uri_for_server(parsed: dict, ds: "DeployState", tag: str, index
 
 
 def deploy_fresh_config(
-    protocol: str, transport: str, security: str,
-    port: int, uuid_val: str, sni: str, ds: "DeployState",
+    protocol: str,
+    transport: str,
+    security: str,
+    port: int,
+    uuid_val: str,
+    sni: str,
+    ds: "DeployState",
 ) -> dict:
     """Generate a fresh parsed-config dict for from-scratch deployment."""
     parsed = {
@@ -301,9 +334,21 @@ def deploy_fresh_config(
         "security": security,
         "sni": sni,
         "host": sni,
-        "path": "/ws" if transport == "ws" else ("/xhttp" if transport in ("xhttp", "splithttp") else ("/" if transport in ("h2", "http") else "")),
+        "path": (
+            "/ws"
+            if transport == "ws"
+            else (
+                "/xhttp"
+                if transport in ("xhttp", "splithttp")
+                else ("/" if transport in ("h2", "http") else "")
+            )
+        ),
         "fp": "chrome",
-        "flow": "xtls-rprx-vision" if (protocol == "vless" and security == "reality" and transport == "tcp") else "",
+        "flow": (
+            "xtls-rprx-vision"
+            if (protocol == "vless" and security == "reality" and transport == "tcp")
+            else ""
+        ),
         "alpn": "h2,http/1.1" if security == "tls" else "",
         "encryption": "none",
         "serviceName": "grpc" if transport == "grpc" else "",
@@ -320,7 +365,10 @@ def deploy_fresh_config(
 
 
 def generate_configless_base(
-    server: str, port: int, uuid_val: str, protocol: str = "vless",
+    server: str,
+    port: int,
+    uuid_val: str,
+    protocol: str = "vless",
 ) -> List[Tuple[str, dict]]:
     """Generate base (uri, parsed) configs for config-less pipeline mode.
 
@@ -364,14 +412,26 @@ def generate_configless_base(
     # If VMess, also add a VLESS ws/tls variant for broader testing
     if protocol == "vmess":
         vless_parsed = {
-            "protocol": "vless", "uuid": uuid_val,
-            "address": server, "port": port,
-            "name": "cfray-vless-ws", "type": "ws",
-            "security": "tls", "sni": default_sni, "host": default_sni,
-            "path": "/ws", "fp": "chrome", "flow": "",
-            "alpn": "h2,http/1.1", "encryption": "none",
-            "serviceName": "", "headerType": "",
-            "pbk": "", "sid": "", "spx": "", "mode": "",
+            "protocol": "vless",
+            "uuid": uuid_val,
+            "address": server,
+            "port": port,
+            "name": "cfray-vless-ws",
+            "type": "ws",
+            "security": "tls",
+            "sni": default_sni,
+            "host": default_sni,
+            "path": "/ws",
+            "fp": "chrome",
+            "flow": "",
+            "alpn": "h2,http/1.1",
+            "encryption": "none",
+            "serviceName": "",
+            "headerType": "",
+            "pbk": "",
+            "sid": "",
+            "spx": "",
+            "mode": "",
         }
         vless_uri = build_vless_uri(vless_parsed, default_sni, "cfray-vless-ws")
         results.append((vless_uri, vless_parsed))
@@ -386,10 +446,15 @@ def deploy_install_xray_system() -> Tuple[bool, str]:
     """Install xray to /usr/local/bin/ with geo files. Returns (ok, message)."""
     if os.path.isfile(DEPLOY_XRAY_BIN):
         try:
-            result = subprocess.run([DEPLOY_XRAY_BIN, "version"],
-                                    capture_output=True, text=True, timeout=5)
+            result = subprocess.run(
+                [DEPLOY_XRAY_BIN, "version"], capture_output=True, text=True, timeout=5
+            )
             if result.returncode == 0:
-                ver = result.stdout.strip().splitlines()[0] if result.stdout.strip() else "unknown"
+                ver = (
+                    result.stdout.strip().splitlines()[0]
+                    if result.stdout.strip()
+                    else "unknown"
+                )
                 return True, f"Xray already installed: {ver}"
         except (OSError, subprocess.SubprocessError):
             pass
@@ -452,7 +517,9 @@ def deploy_validate_config() -> Tuple[bool, str]:
     try:
         result = subprocess.run(
             [DEPLOY_XRAY_BIN, "run", "-test", "-c", DEPLOY_XRAY_CONFIG],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             return True, "Config validated OK"
@@ -469,7 +536,7 @@ def deploy_setup_certbot(domain: str) -> Tuple[bool, str, str]:
     if not domain:
         return False, "", ""
     # Validate domain: must look like a hostname (no flags, no special chars)
-    if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,253}[a-zA-Z0-9])?$', domain):
+    if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,253}[a-zA-Z0-9])?$", domain):
         return False, "", ""
     # Certbot standalone needs port 80
     if not deploy_check_port(80):
@@ -494,10 +561,19 @@ def deploy_setup_certbot(domain: str) -> Tuple[bool, str, str]:
 
     try:
         result = subprocess.run(
-            [certbot, "certonly", "--standalone", "--agree-tos",
-             "--register-unsafely-without-email", "-d", domain,
-             "--non-interactive"],
-            capture_output=True, text=True, timeout=120,
+            [
+                certbot,
+                "certonly",
+                "--standalone",
+                "--agree-tos",
+                "--register-unsafely-without-email",
+                "-d",
+                domain,
+                "--non-interactive",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode == 0:
             cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
@@ -544,7 +620,9 @@ def deploy_systemd_service() -> Tuple[bool, str]:
     try:
         result = subprocess.run(
             ["systemctl", "is-active", "xray"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.stdout.strip() == "active":
             return True, "Xray service running"
@@ -642,7 +720,9 @@ def _write_server_config(config: dict) -> bool:
     if os.path.isfile(DEPLOY_XRAY_CONFIG):
         ts = time.strftime("%Y%m%d_%H%M%S")
         try:
-            shutil.copy2(DEPLOY_XRAY_CONFIG, os.path.join(backup_dir, f"config_{ts}.json"))
+            shutil.copy2(
+                DEPLOY_XRAY_CONFIG, os.path.join(backup_dir, f"config_{ts}.json")
+            )
         except OSError:
             pass
     # Atomic write: write to tmp then rename
@@ -668,7 +748,9 @@ def _restart_xray_service() -> Tuple[bool, str]:
     try:
         result = subprocess.run(
             ["systemctl", "restart", "xray"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if result.returncode != 0:
             return False, f"restart failed: {result.stderr.strip()[:100]}"
@@ -678,7 +760,9 @@ def _restart_xray_service() -> Tuple[bool, str]:
     try:
         result = subprocess.run(
             ["systemctl", "is-active", "xray"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.stdout.strip() == "active":
             return True, "Xray service running"
@@ -732,9 +816,13 @@ def _cm_build_client_uri(inbound: dict, uuid_val: str, server_ip: str) -> Option
         transport = stream.get("network", "tcp")
         security = stream.get("security", "none")
         parsed: dict = {
-            "protocol": protocol, "address": server_ip,
-            "port": port, "uuid": uuid_val,
-            "type": transport, "security": security, "fp": "chrome",
+            "protocol": protocol,
+            "address": server_ip,
+            "port": port,
+            "uuid": uuid_val,
+            "type": transport,
+            "security": security,
+            "fp": "chrome",
         }
         # Transport paths
         if transport == "ws":
@@ -771,7 +859,10 @@ def _cm_build_client_uri(inbound: dict, uuid_val: str, server_ip: str) -> Option
                             kw["creationflags"] = 0x08000000
                         r = subprocess.run(
                             [_xbin, "x25519", "-i", priv],
-                            capture_output=True, text=True, timeout=10, **kw,
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                            **kw,
                         )
                         for line in r.stdout.strip().splitlines():
                             if line.strip().lower().startswith("public key:"):
@@ -864,7 +955,9 @@ def _tui_deploy_handle_security(parsed: dict, ds: "DeployState") -> bool:
             return False
         ds.tls_domain = parsed.get("sni", "") or parsed.get("host", "")
         if cc == "1" and not ds.tls_domain:
-            _w(f" {A.YEL}No domain found in config. Enter cert paths manually.{A.RST}\n")
+            _w(
+                f" {A.YEL}No domain found in config. Enter cert paths manually.{A.RST}\n"
+            )
             cc = "2"
         if cc == "1" and ds.tls_domain:
             _w(f" {A.DIM}Running certbot for {ds.tls_domain}...{A.RST}\n")
@@ -890,7 +983,9 @@ def _tui_deploy_handle_security(parsed: dict, ds: "DeployState") -> bool:
                 ds.tls_key_path = input().strip()
             except (EOFError, KeyboardInterrupt, OSError):
                 return False
-            if not os.path.isfile(ds.tls_cert_path) or not os.path.isfile(ds.tls_key_path):
+            if not os.path.isfile(ds.tls_cert_path) or not os.path.isfile(
+                ds.tls_key_path
+            ):
                 _w(f" {A.RED}Cert/key files not found.{A.RST}\n")
                 _fl()
                 time.sleep(1)
@@ -928,7 +1023,9 @@ def _tui_deploy_fresh_wizard(ds: "DeployState") -> Optional["DeployState"]:
 
         # Security
         _w(f"\n {A.BOLD}Security:{A.RST}\n")
-        _w(f"  {A.CYN}1{A.RST}. REALITY (no certs needed) {A.GRN}(recommended){A.RST}\n")
+        _w(
+            f"  {A.CYN}1{A.RST}. REALITY (no certs needed) {A.GRN}(recommended){A.RST}\n"
+        )
         _w(f"  {A.CYN}2{A.RST}. TLS (needs domain + certificate)\n")
         _w(f"  {A.CYN}3{A.RST}. None (no encryption)\n")
         _w(f" Choice [1]: ")
@@ -946,7 +1043,9 @@ def _tui_deploy_fresh_wizard(ds: "DeployState") -> Optional["DeployState"]:
         # Transport
         _w(f"\n {A.BOLD}Transport:{A.RST}\n")
         if security == "reality":
-            _w(f"  {A.CYN}1{A.RST}. TCP (+ XTLS Vision) {A.GRN}(recommended for REALITY){A.RST}\n")
+            _w(
+                f"  {A.CYN}1{A.RST}. TCP (+ XTLS Vision) {A.GRN}(recommended for REALITY){A.RST}\n"
+            )
             _w(f"  {A.CYN}2{A.RST}. gRPC\n")
             _w(f"  {A.CYN}3{A.RST}. H2\n")
         else:
@@ -964,7 +1063,13 @@ def _tui_deploy_fresh_wizard(ds: "DeployState") -> Optional["DeployState"]:
         if security == "reality":
             transport = {"1": "tcp", "2": "grpc", "3": "h2"}.get(trans_choice, "tcp")
         else:
-            transport = {"1": "tcp", "2": "ws", "3": "grpc", "4": "h2", "5": "xhttp"}.get(trans_choice, "tcp")
+            transport = {
+                "1": "tcp",
+                "2": "ws",
+                "3": "grpc",
+                "4": "h2",
+                "5": "xhttp",
+            }.get(trans_choice, "tcp")
 
         # Port
         if config_num == 0:
@@ -984,7 +1089,9 @@ def _tui_deploy_fresh_wizard(ds: "DeployState") -> Optional["DeployState"]:
 
             # Check if port is free
             if not deploy_check_port(port):
-                _w(f" {A.YEL}Warning: port {port} is already in use by another process{A.RST}\n")
+                _w(
+                    f" {A.YEL}Warning: port {port} is already in use by another process{A.RST}\n"
+                )
                 _w(f" {A.CYN}Continue anyway? [y/N]:{A.RST} ")
                 _fl()
                 try:
@@ -1072,12 +1179,16 @@ def _tui_deploy_fresh_wizard(ds: "DeployState") -> Optional["DeployState"]:
             _w(f" {A.DIM}Reusing TLS certificate{A.RST}\n")
 
         # Build this config
-        parsed = deploy_fresh_config(protocol, transport, security, port, uuid_val, sni, ds)
+        parsed = deploy_fresh_config(
+            protocol, transport, security, port, uuid_val, sni, ds
+        )
         parsed["port"] = port
         ds.parsed_configs.append(parsed)
         config_num += 1
 
-        _w(f"\n {A.GRN}Config #{config_num} added: {protocol}/{transport}/{security} on port {port}{A.RST}\n")
+        _w(
+            f"\n {A.GRN}Config #{config_num} added: {protocol}/{transport}/{security} on port {port}{A.RST}\n"
+        )
         _w(f"\n {A.CYN}Add another config? [y/N]:{A.RST} ")
         _fl()
         try:
@@ -1173,7 +1284,9 @@ def _tui_deploy_from_file(ds: "DeployState") -> Optional["DeployState"]:
 
     for c in configs:
         if c.original_uri:
-            parsed = parse_vless_full(c.original_uri) or parse_vmess_full(c.original_uri)
+            parsed = parse_vless_full(c.original_uri) or parse_vmess_full(
+                c.original_uri
+            )
             if parsed:
                 ds.source_uris.append(c.original_uri)
                 ds.parsed_configs.append(parsed)
@@ -1210,11 +1323,16 @@ def _tui_deploy_from_file(ds: "DeployState") -> Optional["DeployState"]:
             pass
 
     # Filter out VMess + REALITY (not supported) -- keep source_uris in sync
-    paired = [(u, p) for u, p in zip(ds.source_uris, ds.parsed_configs)
-              if not (p.get("protocol") == "vmess" and p.get("security") == "reality")]
+    paired = [
+        (u, p)
+        for u, p in zip(ds.source_uris, ds.parsed_configs)
+        if not (p.get("protocol") == "vmess" and p.get("security") == "reality")
+    ]
     skipped = len(ds.parsed_configs) - len(paired)
     if skipped:
-        _w(f" {A.YEL}Skipped {skipped} VMess+REALITY config(s) (not supported){A.RST}\n")
+        _w(
+            f" {A.YEL}Skipped {skipped} VMess+REALITY config(s) (not supported){A.RST}\n"
+        )
     if not paired:
         _w(f" {A.RED}No valid configs after filtering.{A.RST}\n")
         _fl()
@@ -1226,8 +1344,10 @@ def _tui_deploy_from_file(ds: "DeployState") -> Optional["DeployState"]:
     # Warn about mixed security types
     sec_types = set(p.get("security", "none") for p in ds.parsed_configs)
     if len(sec_types) > 1:
-        _w(f" {A.YEL}Warning: mixed security types ({', '.join(sec_types)}). "
-           f"Keys/certs configured for first config only.{A.RST}\n")
+        _w(
+            f" {A.YEL}Warning: mixed security types ({', '.join(sec_types)}). "
+            f"Keys/certs configured for first config only.{A.RST}\n"
+        )
         _fl()
 
     if not _tui_deploy_handle_security(ds.parsed_configs[0], ds):
@@ -1246,8 +1366,12 @@ def tui_deploy_input() -> Optional["DeployState"]:
     """
     _w(A.SHOW)
     _w(f"\n {A.BOLD}{A.CYN}Deploy Xray Server{A.RST}\n")
-    _w(f" {A.YEL}For:{A.RST} You have a Linux VPS and want to install xray on it (no tunnel).\n")
-    _w(f" {A.DIM}Installs xray, generates config, starts the service. Run this ON your server.{A.RST}\n\n")
+    _w(
+        f" {A.YEL}For:{A.RST} You have a Linux VPS and want to install xray on it (no tunnel).\n"
+    )
+    _w(
+        f" {A.DIM}Installs xray, generates config, starts the service. Run this ON your server.{A.RST}\n\n"
+    )
 
     ok, err = deploy_check_prerequisites()
     if not ok:
@@ -1297,7 +1421,10 @@ async def _tui_run_deploy(args, preloaded_uri: str = ""):
                     return
                 if _pc not in ("y", "yes"):
                     return
-            if parsed.get("protocol") == "vmess" and parsed.get("security") == "reality":
+            if (
+                parsed.get("protocol") == "vmess"
+                and parsed.get("security") == "reality"
+            ):
                 _w(f" {A.RED}VMess + REALITY is not supported.{A.RST}\n")
                 _fl()
                 time.sleep(2)
@@ -1334,7 +1461,9 @@ async def _tui_run_deploy(args, preloaded_uri: str = ""):
         _w(f" {A.BOLD}Config:{A.RST} {DEPLOY_XRAY_CONFIG}\n")
         _w(f" {A.BOLD}Status:{A.RST} systemctl status xray\n\n")
 
-        _w(f" {A.BOLD}{A.CYN}Client URIs (paste into v2rayNG / Nekobox / Hiddify):{A.RST}\n\n")
+        _w(
+            f" {A.BOLD}{A.CYN}Client URIs (paste into v2rayNG / Nekobox / Hiddify):{A.RST}\n\n"
+        )
         for uri in ds.client_uris:
             _w(f" {A.GRN}{uri}{A.RST}\n\n")
 
@@ -1406,8 +1535,12 @@ def _uninstall_all() -> Tuple[bool, str]:
     # --- 1. Stop xray service ---
     for action in ["stop", "disable"]:
         try:
-            subprocess.run(["systemctl", action, "xray"],
-                           capture_output=True, text=True, timeout=15)
+            subprocess.run(
+                ["systemctl", action, "xray"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
         except (OSError, subprocess.SubprocessError):
             pass
     _log("Stopped and disabled xray service")
@@ -1435,8 +1568,9 @@ def _uninstall_all() -> Tuple[bool, str]:
 
     # --- 3. Reload systemd ---
     try:
-        subprocess.run(["systemctl", "daemon-reload"],
-                       capture_output=True, text=True, timeout=10)
+        subprocess.run(
+            ["systemctl", "daemon-reload"], capture_output=True, text=True, timeout=10
+        )
     except (OSError, subprocess.SubprocessError):
         pass
 
@@ -1486,8 +1620,12 @@ async def _tui_connection_manager(args):
         # Service status
         xray_running = False
         try:
-            r = subprocess.run(["systemctl", "is-active", "xray"],
-                                capture_output=True, text=True, timeout=5)
+            r = subprocess.run(
+                ["systemctl", "is-active", "xray"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
             xray_running = r.stdout.strip() == "active"
         except (OSError, subprocess.SubprocessError):
             pass
@@ -1498,7 +1636,9 @@ async def _tui_connection_manager(args):
         out = []
         out.append(f"{A.CYN}{'=' * (W + 2)}{A.RST}")
         _cmhdr = f" {A.BOLD}{A.CYN}Connection Manager{A.RST}"
-        out.append(f"{A.CYN}|{A.RST}{_cmhdr}{' ' * max(0, W - _vl(_cmhdr))}{A.CYN}|{A.RST}")
+        out.append(
+            f"{A.CYN}|{A.RST}{_cmhdr}{' ' * max(0, W - _vl(_cmhdr))}{A.CYN}|{A.RST}"
+        )
         out.append(f"{A.CYN}{'=' * (W + 2)}{A.RST}")
 
         # Service status
@@ -1508,9 +1648,9 @@ async def _tui_connection_manager(args):
                 vis = 0
                 i = 0
                 while i < len(txt) and vis < W - 1:
-                    if txt[i] == '\033' and i + 1 < len(txt) and txt[i + 1] == '[':
+                    if txt[i] == "\033" and i + 1 < len(txt) and txt[i + 1] == "[":
                         j = i + 2
-                        while j < len(txt) and txt[j] != 'm':
+                        while j < len(txt) and txt[j] != "m":
                             j += 1
                         i = j + 1
                     else:
@@ -1518,10 +1658,12 @@ async def _tui_connection_manager(args):
                         i += 1
                 txt = txt[:i] + A.RST + "..."
                 vlen = _vl(txt)
-            pad = ' ' * max(0, W - vlen)
+            pad = " " * max(0, W - vlen)
             out.append(f"{A.CYN}|{A.RST}{txt}{pad}{A.CYN}|{A.RST}")
 
-        xray_dot = f"{A.GRN}*{A.RST} running" if xray_running else f"{A.RED}*{A.RST} stopped"
+        xray_dot = (
+            f"{A.GRN}*{A.RST} running" if xray_running else f"{A.RED}*{A.RST} stopped"
+        )
         bx(f"  Xray Service: {xray_dot}  {A.DIM}(system){A.RST}")
 
         out.append(f"{A.CYN}{'-' * (W + 2)}{A.RST}")
@@ -1588,9 +1730,15 @@ async def _tui_connection_manager(args):
             try:
                 result = subprocess.run(
                     ["journalctl", "-u", "xray", "-n", "30", "--no-pager"],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
-                _w(result.stdout[:3000] if result.stdout else f" {A.DIM}(no logs){A.RST}\n")
+                _w(
+                    result.stdout[:3000]
+                    if result.stdout
+                    else f" {A.DIM}(no logs){A.RST}\n"
+                )
             except (OSError, subprocess.SubprocessError) as e:
                 _w(f" {A.RED}Failed to read logs: {e}{A.RST}\n")
             _w(f"\n {A.DIM}Press any key to go back...{A.RST}\n")
@@ -1601,7 +1749,9 @@ async def _tui_connection_manager(args):
         if key == "d":
             _w(A.SHOW)
             _w(f"\n {A.RED}{A.BOLD}Uninstall Xray completely?{A.RST}\n")
-            _w(f" {A.DIM}This will stop xray, remove the binary, config, and systemd service.{A.RST}\n")
+            _w(
+                f" {A.DIM}This will stop xray, remove the binary, config, and systemd service.{A.RST}\n"
+            )
             _w(f"\n {A.RED}Type 'uninstall' to confirm:{A.RST} ")
             _fl()
             try:
@@ -1657,7 +1807,9 @@ async def _tui_connection_manager(args):
                 ib_data = inbounds[real_idx]
                 settings = ib_data.get("settings") or {}
                 clients = settings.get("clients") or []
-                _w(f" {A.BOLD}Inbound #{i+1}{A.RST} ({s['protocol']}:{s['port']} {s['transport']}/{s['security']})\n")
+                _w(
+                    f" {A.BOLD}Inbound #{i+1}{A.RST} ({s['protocol']}:{s['port']} {s['transport']}/{s['security']})\n"
+                )
                 for cl in clients:
                     _cl_uuid = cl.get("id", "")
                     if _cl_uuid:
@@ -1672,7 +1824,9 @@ async def _tui_connection_manager(args):
 
         if key == "u" and summaries:
             _w(A.SHOW)
-            which = _tui_prompt_text(f"Add user to which inbound? [1-{len(summaries)}]:")
+            which = _tui_prompt_text(
+                f"Add user to which inbound? [1-{len(summaries)}]:"
+            )
             if which:
                 try:
                     sel = int(which) - 1
@@ -1702,10 +1856,14 @@ async def _tui_connection_manager(args):
                             _user_add_ok = True
                         else:
                             clients.pop()
-                            _w(f"\n {A.RED}Failed to write config (run as root?){A.RST}\n")
+                            _w(
+                                f"\n {A.RED}Failed to write config (run as root?){A.RST}\n"
+                            )
                         if _user_add_ok:
                             if not _cm_server_ip:
-                                _cm_server_ip = deploy_detect_server_ip() or "<server-ip>"
+                                _cm_server_ip = (
+                                    deploy_detect_server_ip() or "<server-ip>"
+                                )
                             _u_uri = _cm_build_client_uri(ib, new_uuid, _cm_server_ip)
                             if _u_uri:
                                 _w(f"\n {A.BOLD}{A.CYN}Client URI:{A.RST}\n")
@@ -1725,7 +1883,9 @@ async def _tui_connection_manager(args):
                     sel = int(which) - 1
                     if 0 <= sel < len(summaries):
                         s = summaries[sel]
-                        _w(f" {A.YEL}Remove {s['protocol']}:{s['port']}? [y/N]:{A.RST} ")
+                        _w(
+                            f" {A.YEL}Remove {s['protocol']}:{s['port']}? [y/N]:{A.RST} "
+                        )
                         _fl()
                         try:
                             confirm = input().strip().lower()
@@ -1743,7 +1903,9 @@ async def _tui_connection_manager(args):
                             else:
                                 # Restore in-memory state on write failure
                                 inbounds.insert(real_idx, removed)
-                                _w(f" {A.RED}Failed to write config (run as root?){A.RST}\n")
+                                _w(
+                                    f" {A.RED}Failed to write config (run as root?){A.RST}\n"
+                                )
                             _fl()
                             time.sleep(1.5)
                 except (ValueError, IndexError):
@@ -1779,9 +1941,15 @@ async def _tui_connection_manager(args):
                 _w(f" {A.YEL}Invalid port, using 443{A.RST}\n")
                 new_port = 443
             # Check for port conflicts -- our own inbounds
-            used_ports = {int(ib.get("port", 0)) for ib in inbounds if isinstance(ib, dict) and ib.get("port")}
+            used_ports = {
+                int(ib.get("port", 0))
+                for ib in inbounds
+                if isinstance(ib, dict) and ib.get("port")
+            }
             if new_port in used_ports:
-                _w(f" {A.YEL}Warning: port {new_port} already used by another inbound{A.RST}\n")
+                _w(
+                    f" {A.YEL}Warning: port {new_port} already used by another inbound{A.RST}\n"
+                )
                 _w(f" {A.CYN}Continue anyway? [y/N]:{A.RST} ")
                 _fl()
                 try:
@@ -1791,7 +1959,9 @@ async def _tui_connection_manager(args):
                 if _pc not in ("y", "yes"):
                     continue
             elif not deploy_check_port(new_port):
-                _w(f" {A.YEL}Warning: port {new_port} is already in use by another process{A.RST}\n")
+                _w(
+                    f" {A.YEL}Warning: port {new_port} is already in use by another process{A.RST}\n"
+                )
                 _w(f" {A.CYN}Continue anyway? [y/N]:{A.RST} ")
                 _fl()
                 try:
@@ -1833,15 +2003,21 @@ async def _tui_connection_manager(args):
             if security == "reality":
                 _xbin = xray_find_binary(None)
                 if not _xbin:
-                    _w(f" {A.RED}REALITY requires xray binary for key generation.{A.RST}\n")
-                    _w(f" {A.DIM}Falling back to no security. Use Deploy for REALITY.{A.RST}\n")
+                    _w(
+                        f" {A.RED}REALITY requires xray binary for key generation.{A.RST}\n"
+                    )
+                    _w(
+                        f" {A.DIM}Falling back to no security. Use Deploy for REALITY.{A.RST}\n"
+                    )
                     _fl()
                     time.sleep(1.5)
                     security = "none"
                 else:
                     _reality_priv, _reality_pub = deploy_generate_reality_keys(_xbin)
                     if not _reality_priv:
-                        _w(f" {A.RED}Key generation failed. Falling back to none.{A.RST}\n")
+                        _w(
+                            f" {A.RED}Key generation failed. Falling back to none.{A.RST}\n"
+                        )
                         _fl()
                         time.sleep(1.5)
                         security = "none"
@@ -1922,10 +2098,12 @@ async def _tui_connection_manager(args):
                 _w(f" {A.DIM}Short ID:   {_reality_sid}{A.RST}\n")
             elif security == "tls":
                 stream["tlsSettings"] = {
-                    "certificates": [{
-                        "certificateFile": _tls_cert,
-                        "keyFile": _tls_key,
-                    }],
+                    "certificates": [
+                        {
+                            "certificateFile": _tls_cert,
+                            "keyFile": _tls_key,
+                        }
+                    ],
                 }
 
             if config is None:
@@ -1938,7 +2116,13 @@ async def _tui_connection_manager(args):
                     ],
                     "routing": {
                         "domainStrategy": "AsIs",
-                        "rules": [{"type": "field", "ip": ["geoip:private"], "outboundTag": "block"}],
+                        "rules": [
+                            {
+                                "type": "field",
+                                "ip": ["geoip:private"],
+                                "outboundTag": "block",
+                            }
+                        ],
                     },
                 }
                 inbounds = config["inbounds"]
@@ -1947,7 +2131,9 @@ async def _tui_connection_manager(args):
             inbounds.append(new_inbound)
             if _write_server_config(config):
                 ok, msg = _restart_xray_service()
-                _w(f"\n {A.GRN}Inbound added: {protocol}:{new_port} ({transport}/{security}){A.RST}\n")
+                _w(
+                    f"\n {A.GRN}Inbound added: {protocol}:{new_port} ({transport}/{security}){A.RST}\n"
+                )
                 if not ok:
                     _w(f" {A.YEL}Warning: {msg}{A.RST}\n")
                 _add_ok = True

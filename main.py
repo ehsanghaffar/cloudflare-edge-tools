@@ -1,25 +1,5 @@
 #!/usr/bin/env python3
 #
-# ┌─────────────────────────────────────────────────────────────────┐
-# │                                                                 │
-# │   ⚡  CF CONFIG SCANNER v1.1                                    │
-# │                                                                 │
-# │   Test VLESS/VMess proxy configs for latency + download speed   │
-# │                                                                 │
-# │   • Latency test (TCP + TLS) all IPs in seconds                 │
-# │   • Download speed test via progressive funnel                  │
-# │   • Live TUI dashboard with real-time results                   │
-# │   • Smart rate limiting with CDN fallback                       │
-# │   • Clean IP Finder — scan all Cloudflare ranges (up to 3M)     │
-# │   • Multi-port scanning (443, 8443) for maximum coverage        │
-# │   • Zero dependencies — Python 3.8+ stdlib only                 │
-# │   • Xray Pipeline Test — smart probe → expand → speed test      │
-# │   • Deploy Xray Server — full VPS setup with systemd + certs    │
-# │   • Worker Proxy — fresh workers.dev SNI for any VLESS config   │
-# │                                                                 │
-# │                                                                 │
-# └─────────────────────────────────────────────────────────────────┘
-#
 # Usage:
 #   python3 scanner.py                              Interactive TUI
 #   python3 scanner.py -i configs.txt               Normal mode
@@ -30,84 +10,78 @@
 
 import asyncio
 import argparse
-import base64
 import csv
 import glob as globmod
-import json
 import os
 import platform as _platform
-import random
 import re
-import secrets
 import signal
 import socket
-import ssl
-import statistics
-import subprocess
-import sys
 import time
-import urllib.parse
-import zipfile
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple
 
-from src.constants import (A, ANSI, CDN_FALLBACK, CF_HTTPS_PORTS, CF_SUBNETS,
-                           CF_TEST_IPS, CLEAN_MODES, DEBUG_LOG, DEPLOY_SYSTEMD_UNIT,
-                           DEPLOY_XRAY_BACKUP_DIR, DEPLOY_XRAY_BIN, DEPLOY_XRAY_CONFIG,
-                           DEPLOY_XRAY_CONFIG_DIR, DEPLOY_XRAY_SERVICE, DEPLOY_XRAY_SHARE,
-                           LATENCY_TIMEOUT, LATENCY_WORKERS, LOG_MAX_BYTES, PRESETS,
-                           RESULTS_DIR, SPEED_HOST, SPEED_PATH, SPEED_TIMEOUT, SPEED_WORKERS,
-                           VERSION, XRAY_BASE_PORT, XRAY_BIN_DIR, XRAY_CONFIG_TEMPLATE,
-                           XRAY_CONNECT_TIMEOUT, XRAY_FRAG_PRESETS, XRAY_HOME,
-                           XRAY_PROFILES_DIR, XRAY_QUICK_SIZE, XRAY_QUICK_TIMEOUT,
-                           XRAY_SPEED_SIZE, XRAY_SPEED_TIMEOUT, XRAY_TMP_DIR,
-                           _CF_NETS, _CF_PREFLIGHT_IPS, _generate_random_cf_ips,
-                           _is_cf_address, _resolve_is_cf)
-from src.clean_finder import split_to_24_blocks, probe_tls_handshake, generate_cf_ips, scan_clean_ips
-from src.config_parse import (_infer_orig_sni, fetch_sub, generate_from_template,
-                              load_addresses, load_input, parse_config,
-                              parse_rounds_str, parse_size, parse_vless_full,
-                              parse_vmess_full)
-from src.models import (CleanScanState, ConfigEntry, DeployState,
-                        PipelineConfig, Result, RoundCfg, State,
-                        XrayTestState, XrayVariation,
-                        calc_scores, sorted_alive, sorted_all)
-from src.rate_limiter import CFRateLimiter
-from src.speed_test import download_single, latency_test, phase1, phase2_round
-from src.tui import (Dashboard, XrayDashboard, _clean_pick_mode, _clean_show_results,
-                     _draw_clean_progress, _help_clean_finder, _help_cli_reference,
-                     _help_deploy, _help_getting_started, _help_scan_modes,
-                     _help_show_page, _help_worker_proxy, _help_xray_test,
-                     _post_pipeline_results, _refresh_loop, _run_pipeline_core,
-                     _tui_prompt_text, _tui_run_pipeline, draw_box_bottom,
-                     draw_box_line, draw_box_sep, draw_menu_header, find_config_files,
-                     tui_pick_file, tui_pick_mode,
-                     tui_pipeline_input, tui_run_clean_finder, tui_show_guide,
-                     xray_save_results, _results_path)
-from src.xray_utils import (_build_uri, _extract_vless_ws_params, _find_free_ports,
-                            _test_single_variation, _vless_ws_read_tunnel,
-                            _vless_ws_speed_test, _xray_calc_scores,
-                            _xray_speed_test_blocking, build_vless_uri,
-                            build_vmess_uri, build_xray_config, expand_custom_ips,
-                            generate_pipeline_variations, generate_xray_variations,
-                            switch_transport, xray_find_binary, xray_install,
-                            xray_pipeline_test, xray_speed_test, XrayProcess)
-from src.utils import (_dbg, _WsFrameParser, _char_width, _fl, _flush_stdin,
-                       _fmt_elapsed, _prompt_number, _read_key_blocking,
-                       _read_key_nb, _restore_console_input, _vl, _w,
-                       _wait_any_key, _ws_frame_encode, enable_ansi, term_size)
-from src.deploy_utils import (
-    _build_single_inbound, _cm_build_client_uri, _parse_inbound_summary,
-    _read_server_config, _restart_xray_service, _tui_connection_manager,
-    _tui_deploy_detect_ip, _tui_deploy_fresh_wizard, _tui_deploy_from_file,
-    _tui_deploy_from_uri, _tui_deploy_handle_security, _tui_run_deploy,
-    _uninstall_all, _write_server_config, build_client_uri_for_server,
-    build_server_config, deploy_check_port, deploy_check_prerequisites,
-    deploy_detect_server_ip, deploy_fresh_config, deploy_generate_reality_keys,
-    deploy_generate_short_id, deploy_generate_uuid, deploy_install_xray_system,
-    deploy_run_pipeline, deploy_save_results, deploy_setup_certbot,
-    deploy_systemd_service, deploy_validate_config, deploy_write_config,
-    generate_configless_base, tui_deploy_input,
+from src.constants import (
+    A,
+    CF_HTTPS_PORTS,
+    CLEAN_MODES,
+    DEBUG_LOG,
+    LATENCY_TIMEOUT,
+    LATENCY_WORKERS,
+    PRESETS,
+    SPEED_HOST,
+    SPEED_TIMEOUT,
+    SPEED_WORKERS,
+    _CF_NETS,
 )
+from src.clean_finder import generate_cf_ips, scan_clean_ips
+from src.config_parse import (
+    fetch_sub,
+    generate_from_template,
+    load_addresses,
+    load_input,
+    parse_rounds_str,
+    parse_vless_full,
+)
+from src.models import (
+    ConfigEntry,
+    PipelineConfig,
+    Result,
+    RoundCfg,
+    State,
+    XrayTestState,
+    calc_scores,
+    sorted_alive,
+)
+from src.rate_limiter import CFRateLimiter
+from src.speed_test import phase1, phase2_round
+from src.tui import (
+    Dashboard,
+    _post_pipeline_results,
+    _refresh_loop,
+    _run_pipeline_core,
+    _tui_run_pipeline,
+    draw_box_bottom,
+    draw_box_line,
+    draw_menu_header,
+    tui_pick_file,
+    tui_pick_mode,
+    tui_run_clean_finder,
+    tui_show_guide,
+    _results_path,
+)
+from src.xray_utils import build_vless_uri, xray_find_binary, xray_install
+from src.utils import (
+    _dbg,
+    _fl,
+    _flush_stdin,
+    _read_key_blocking,
+    _restore_console_input,
+    _vl,
+    _w,
+    enable_ansi,
+    term_size,
+)
+from src.deploy_utils import _tui_connection_manager, _tui_run_deploy
 
 
 def build_dynamic_rounds(mode: str, alive_count: int) -> List[RoundCfg]:
@@ -153,8 +127,9 @@ def load_configs_from_args(args) -> Tuple[List[ConfigEntry], str]:
     return [], ""
 
 
-def _worker_proxy_generate_script(origin_host: str, origin_port: int,
-                                   origin_security: str = "tls") -> str:
+def _worker_proxy_generate_script(
+    origin_host: str, origin_port: int, origin_security: str = "tls"
+) -> str:
     """Generate CF Worker script to proxy WS to an origin behind CF CDN.
 
     Unlike _cdn_generate_worker_script (which targets a raw IP you own),
@@ -162,9 +137,12 @@ def _worker_proxy_generate_script(origin_host: str, origin_port: int,
     the Host header so CF routes the internal fetch to the real origin.
     """
     scheme = "https" if origin_security in ("tls", "reality") else "http"
-    port_part = ("" if (scheme == "https" and origin_port == 443)
-                      or (scheme == "http" and origin_port == 80)
-                 else f":{origin_port}")
+    port_part = (
+        ""
+        if (scheme == "https" and origin_port == 443)
+        or (scheme == "http" and origin_port == 80)
+        else f":{origin_port}"
+    )
     return f"""\
 // CFray Worker Proxy — route ANY SNI to origin
 // Deploy: dash.cloudflare.com → Workers & Pages → Create → Deploy
@@ -199,13 +177,22 @@ async def _tui_worker_proxy(args):
     width = cols - 2
 
     _w(f"\n{A.CYN}{'=' * (width + 2)}{A.RST}\n")
-    _w(f"{A.CYN}|{A.RST} {A.BOLD}{A.WHT}Worker Proxy -- Fresh SNI for Any VLESS Config{A.RST}" +
-       " " * max(0, width - 50) + f"{A.CYN}|{A.RST}\n")
+    _w(
+        f"{A.CYN}|{A.RST} {A.BOLD}{A.WHT}Worker Proxy -- Fresh SNI for Any VLESS Config{A.RST}"
+        + " " * max(0, width - 50)
+        + f"{A.CYN}|{A.RST}\n"
+    )
     _w(f"{A.CYN}{'=' * (width + 2)}{A.RST}\n\n")
 
-    _w(f" {A.DIM}If the original domain's SNI is blocked by DPI, a CF Worker gives{A.RST}\n")
-    _w(f" {A.DIM}you a fresh *.workers.dev SNI. The Worker proxies to the original{A.RST}\n")
-    _w(f" {A.DIM}server, so your configs work with a different (unblocked) SNI.{A.RST}\n\n")
+    _w(
+        f" {A.DIM}If the original domain's SNI is blocked by DPI, a CF Worker gives{A.RST}\n"
+    )
+    _w(
+        f" {A.DIM}you a fresh *.workers.dev SNI. The Worker proxies to the original{A.RST}\n"
+    )
+    _w(
+        f" {A.DIM}server, so your configs work with a different (unblocked) SNI.{A.RST}\n\n"
+    )
 
     _restore_console_input()
     _w(f" {A.BOLD}{A.CYN}[1/3]{A.RST} {A.BOLD}Paste your VLESS config URI:{A.RST}\n")
@@ -229,7 +216,9 @@ async def _tui_worker_proxy(args):
         return
 
     if parsed.get("type") not in ("ws", "websocket"):
-        _w(f"\n {A.RED}Only WebSocket (ws) transport is supported for Worker proxy.{A.RST}\n")
+        _w(
+            f"\n {A.RED}Only WebSocket (ws) transport is supported for Worker proxy.{A.RST}\n"
+        )
         _w(f" {A.DIM}Press any key...{A.RST}\n")
         _fl()
         _read_key_blocking()
@@ -241,8 +230,12 @@ async def _tui_worker_proxy(args):
     uuid_val = parsed.get("uuid", "")
     security = parsed.get("security", "tls")
 
-    _w(f"\n   {A.GRN}Protocol: VLESS  |  Transport: WS  |  Security: {security}{A.RST}\n")
-    _w(f"   {A.GRN}Origin host: {origin_host}:{origin_port}  |  Path: {ws_path}{A.RST}\n")
+    _w(
+        f"\n   {A.GRN}Protocol: VLESS  |  Transport: WS  |  Security: {security}{A.RST}\n"
+    )
+    _w(
+        f"   {A.GRN}Origin host: {origin_host}:{origin_port}  |  Path: {ws_path}{A.RST}\n"
+    )
     _w(f"   {A.GRN}UUID: {uuid_val[:8]}...{A.RST}\n\n")
 
     _w(f" {A.BOLD}{A.CYN}[2/3]{A.RST} {A.BOLD}Worker script generated:{A.RST}\n\n")
@@ -253,16 +246,24 @@ async def _tui_worker_proxy(args):
     _w(f" {A.DIM}{'-' * (width - 2)}{A.RST}\n\n")
 
     _w(f" {A.BOLD}Deploy instructions:{A.RST}\n\n")
-    _w(f"   {A.WHT}1.{A.RST} Go to {A.CYN}dash.cloudflare.com{A.RST} -> Workers & Pages -> Create\n")
-    _w(f"   {A.WHT}2.{A.RST} Click {A.WHT}\"Create Worker\"{A.RST}, name it anything\n")
-    _w(f"   {A.WHT}3.{A.RST} Click {A.WHT}\"Deploy\"{A.RST}, then {A.WHT}\"Edit Code\"{A.RST}\n")
+    _w(
+        f"   {A.WHT}1.{A.RST} Go to {A.CYN}dash.cloudflare.com{A.RST} -> Workers & Pages -> Create\n"
+    )
+    _w(f'   {A.WHT}2.{A.RST} Click {A.WHT}"Create Worker"{A.RST}, name it anything\n')
+    _w(
+        f'   {A.WHT}3.{A.RST} Click {A.WHT}"Deploy"{A.RST}, then {A.WHT}"Edit Code"{A.RST}\n'
+    )
     _w(f"   {A.WHT}4.{A.RST} Delete all default code, paste the script above\n")
-    _w(f"   {A.WHT}5.{A.RST} Click {A.WHT}\"Deploy\"{A.RST} again\n")
-    _w(f"   {A.WHT}6.{A.RST} Copy your Worker URL (e.g. {A.GRN}my-proxy.username.workers.dev{A.RST})\n\n")
+    _w(f'   {A.WHT}5.{A.RST} Click {A.WHT}"Deploy"{A.RST} again\n')
+    _w(
+        f"   {A.WHT}6.{A.RST} Copy your Worker URL (e.g. {A.GRN}my-proxy.username.workers.dev{A.RST})\n\n"
+    )
 
     _flush_stdin()
     _restore_console_input()
-    _w(f" {A.BOLD}{A.CYN}[3/3]{A.RST} {A.YEL}Enter your Worker URL when deployed{A.RST} (or Enter to skip): ")
+    _w(
+        f" {A.BOLD}{A.CYN}[3/3]{A.RST} {A.YEL}Enter your Worker URL when deployed{A.RST} (or Enter to skip): "
+    )
     _fl()
     try:
         worker_url = input().strip()
@@ -276,9 +277,9 @@ async def _tui_worker_proxy(args):
         return
 
     worker_url = worker_url.replace("https://", "").replace("http://", "").rstrip("/")
-    match = re.search(r'[a-zA-Z]', worker_url)
+    match = re.search(r"[a-zA-Z]", worker_url)
     if match and match.start() > 0 and ".workers.dev" in worker_url:
-        worker_url = worker_url[match.start():]
+        worker_url = worker_url[match.start() :]
 
     _w(f"\n   {A.GRN}Worker URL: {worker_url}{A.RST}\n")
     new_parsed = dict(parsed)
@@ -292,9 +293,15 @@ async def _tui_worker_proxy(args):
     _w(f"\n {A.BOLD}New config URI:{A.RST}\n")
     _w(f" {A.GRN}{new_uri}{A.RST}\n\n")
     _w(f" {A.BOLD}{A.CYN}How it works:{A.RST}\n")
-    _w(f"   {A.DIM}Client -> any CF IP (SNI={worker_url}) -> CF routes to Worker{A.RST}\n")
-    _w(f"   {A.DIM}Worker -> Host={origin_host} -> CF routes to original server{A.RST}\n")
-    _w(f"   {A.DIM}Result: fresh *.workers.dev SNI instead of original domain!{A.RST}\n\n")
+    _w(
+        f"   {A.DIM}Client -> any CF IP (SNI={worker_url}) -> CF routes to Worker{A.RST}\n"
+    )
+    _w(
+        f"   {A.DIM}Worker -> Host={origin_host} -> CF routes to original server{A.RST}\n"
+    )
+    _w(
+        f"   {A.DIM}Result: fresh *.workers.dev SNI instead of original domain!{A.RST}\n\n"
+    )
 
     _w(f" {A.YEL}Run pipeline test with ALL SNIs?{A.RST} [Y/n]: ")
     _fl()
@@ -306,7 +313,8 @@ async def _tui_worker_proxy(args):
         re_parsed = parse_vless_full(new_uri)
         if re_parsed:
             pcfg = PipelineConfig(
-                uri=new_uri, parsed=re_parsed,
+                uri=new_uri,
+                parsed=re_parsed,
                 sni_pool=[],
                 frag_preset="all",
                 transport_variants=[],
@@ -335,15 +343,25 @@ def save_csv(st: State, path: str, sort_by: str = "score"):
     results = sorted_alive(st, sort_by)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        headers = ["Rank", "IP", "Domains", "Domain_Count", "Ping_ms", "Conn_ms", "TTFB_ms"]
+        headers = [
+            "Rank",
+            "IP",
+            "Domains",
+            "Domain_Count",
+            "Ping_ms",
+            "Conn_ms",
+            "TTFB_ms",
+        ]
         for i, rc in enumerate(st.rounds):
             headers.append(f"R{i + 1}_{rc.label}_MBps")
         headers += ["Best_MBps", "Colo", "Score", "Error"]
         writer.writerow(headers)
         for rank, result in enumerate(results, 1):
             row = [
-                rank, result.ip,
-                "|".join(result.domains[:5]), len(result.domains),
+                rank,
+                result.ip,
+                "|".join(result.domains[:5]),
+                len(result.domains),
                 f"{result.tcp_ms:.1f}" if result.tcp_ms > 0 else "",
                 f"{result.tls_ms:.1f}" if result.tls_ms > 0 else "",
                 f"{result.ttfb_ms:.1f}" if result.ttfb_ms > 0 else "",
@@ -356,7 +374,9 @@ def save_csv(st: State, path: str, sort_by: str = "score"):
                 )
             row += [
                 f"{result.best_mbps:.3f}" if result.best_mbps > 0 else "",
-                result.colo, f"{result.score:.1f}", result.error,
+                result.colo,
+                f"{result.score:.1f}",
+                result.error,
             ]
             writer.writerow(row)
 
@@ -379,8 +399,14 @@ def save_configs(st: State, path: str, top: int = 50, sort_by: str = "score"):
                         break
             else:
                 domains = ", ".join(result.domains[:3])
-                extra = f" (+{len(result.domains) - 3} more)" if len(result.domains) > 3 else ""
-                f.write(f"{result.ip}  # score={result.score:.1f} domains={domains}{extra}\n")
+                extra = (
+                    f" (+{len(result.domains) - 3} more)"
+                    if len(result.domains) > 3
+                    else ""
+                )
+                f.write(
+                    f"{result.ip}  # score={result.score:.1f} domains={domains}{extra}\n"
+                )
                 count += 1
 
 
@@ -396,8 +422,14 @@ def save_all_configs_sorted(st: State, path: str, sort_by: str = "score"):
                     f.write(uri + "\n")
             else:
                 domains = ", ".join(result.domains[:3])
-                extra = f" (+{len(result.domains) - 3} more)" if len(result.domains) > 3 else ""
-                f.write(f"{result.ip}  # score={result.score:.1f} domains={domains}{extra}\n")
+                extra = (
+                    f" (+{len(result.domains) - 3} more)"
+                    if len(result.domains) > 3
+                    else ""
+                )
+                f.write(
+                    f"{result.ip}  # score={result.score:.1f} domains={domains}{extra}\n"
+                )
         for result in dead:
             if has_uris:
                 for uri in result.uris:
@@ -407,8 +439,14 @@ def save_all_configs_sorted(st: State, path: str, sort_by: str = "score"):
                 f.write(f"{result.ip}  # DEAD domains={domains}\n")
 
 
-def do_export(st: State, base_path: str, sort_by: str = "score", top: int = 50,
-              output_csv: str = "", output_configs: str = ""):
+def do_export(
+    st: State,
+    base_path: str,
+    sort_by: str = "score",
+    top: int = 50,
+    output_csv: str = "",
+    output_configs: str = "",
+):
     stem = os.path.basename(base_path).rsplit(".", 1)[0] if base_path else "scan"
     csv_path = output_csv if output_csv else _results_path(stem + "_results.csv")
     if output_configs:
@@ -425,7 +463,9 @@ def do_export(st: State, base_path: str, sort_by: str = "score", top: int = 50,
     return csv_path, cfg_path, full_path
 
 
-async def _resolve(entry: ConfigEntry, semaphore: asyncio.Semaphore, counter: List[int]) -> ConfigEntry:
+async def _resolve(
+    entry: ConfigEntry, semaphore: asyncio.Semaphore, counter: List[int]
+) -> ConfigEntry:
     if entry.ip:
         counter[0] += 1
         return entry
@@ -452,16 +492,24 @@ async def resolve_all(st: State, workers: int = 100):
         while counter[0] < total:
             s = spin[i % len(spin)]
             pct = counter[0] * 100 // max(1, total)
-            _w(f"\r  {A.CYN}{s}{A.RST} Resolving DNS... {counter[0]}/{total}  ({pct}%)  ")
+            _w(
+                f"\r  {A.CYN}{s}{A.RST} Resolving DNS... {counter[0]}/{total}  ({pct}%)  "
+            )
             _fl()
             i += 1
             await asyncio.sleep(0.15)
-        _w(f"\r  {A.GRN}OK{A.RST} Resolved {total} domains -> {len(set(config.ip for config in st.configs if config.ip))} unique IPs\n")
+        _w(
+            f"\r  {A.GRN}OK{A.RST} Resolved {total} domains -> {len(set(config.ip for config in st.configs if config.ip))} unique IPs\n"
+        )
         _fl()
 
     prog_task = asyncio.create_task(_progress())
     try:
-        st.configs = list(await asyncio.gather(*[_resolve(config, semaphore, counter) for config in st.configs]))
+        st.configs = list(
+            await asyncio.gather(
+                *[_resolve(config, semaphore, counter) for config in st.configs]
+            )
+        )
     finally:
         prog_task.cancel()
         try:
@@ -477,15 +525,21 @@ async def resolve_all(st: State, workers: int = 100):
         st.res[ip] = Result(
             ip=ip,
             domains=[config.address for config in config_entries],
-            uris=[config.original_uri for config in config_entries if config.original_uri],
+            uris=[
+                config.original_uri for config in config_entries if config.original_uri
+            ],
         )
 
 
-async def run_scan(st: State, workers: int, speed_workers: int, timeout: float, speed_timeout: float):
+async def run_scan(
+    st: State, workers: int, speed_workers: int, timeout: float, speed_timeout: float
+):
     try:
         os.makedirs("results", exist_ok=True)
         with open(DEBUG_LOG, "w") as f:
-            f.write(f"=== Scan started {time.strftime('%Y-%m-%d %H:%M:%S')} mode={st.mode} ===\n")
+            f.write(
+                f"=== Scan started {time.strftime('%Y-%m-%d %H:%M:%S')} mode={st.mode} ===\n"
+            )
     except OSError:
         pass
     st.start_time = time.monotonic()
@@ -502,7 +556,9 @@ async def run_scan(st: State, workers: int, speed_workers: int, timeout: float, 
                 seen.add(ip)
                 st.ips.append(ip)
                 st.res[ip] = Result(ip=ip)
-    _dbg(f"=== Built IP map: {len(st.ips)} unique IPs from {len(st.configs)} configs ===")
+    _dbg(
+        f"=== Built IP map: {len(st.ips)} unique IPs from {len(st.configs)} configs ==="
+    )
     if not st.interrupted:
         await phase1(st, workers, timeout)
     if st.interrupted or st.alive_n == 0:
@@ -519,7 +575,9 @@ async def run_scan(st: State, workers: int, speed_workers: int, timeout: float, 
         cut_n = max(1, int(len(alive) * cut_pct / 100))
         alive = alive[:-cut_n]
         st.latency_cut_n = cut_n
-        _dbg(f"=== Latency cut: removed bottom {cut_pct}% = {cut_n} IPs, {len(alive)} remaining ===")
+        _dbg(
+            f"=== Latency cut: removed bottom {cut_pct}% = {cut_n} IPs, {len(alive)} remaining ==="
+        )
     if not st.rounds:
         st.rounds = build_dynamic_rounds(st.mode, len(alive))
         _dbg(f"=== Dynamic rounds: {[(r.label, r.keep) for r in st.rounds]} ===")
@@ -535,13 +593,25 @@ async def run_scan(st: State, workers: int, speed_workers: int, timeout: float, 
             st.phase = f"speed_r{i + 1}"
             actual_count = min(round_cfg.keep, len(candidates))
             st.phase_label = f"Speed R{i + 1} ({round_cfg.label} x {actual_count})"
-            _dbg(f"=== Round R{i+1}: {round_cfg.size}B x {actual_count} IPs, workers={speed_workers}, timeout={speed_timeout}s, budget={rate_limiter.BUDGET - rate_limiter.count} left ===")
+            _dbg(
+                f"=== Round R{i+1}: {round_cfg.size}B x {actual_count} IPs, workers={speed_workers}, timeout={speed_timeout}s, budget={rate_limiter.BUDGET - rate_limiter.count} left ==="
+            )
             if i > 0:
                 calc_scores(st)
-                candidates = sorted(candidates, key=lambda ip: st.res[ip].score, reverse=True)
-            candidates = candidates[:round_cfg.keep]
-            await phase2_round(st, round_cfg, candidates, speed_workers, speed_timeout,
-                               rate_limiter=rate_limiter, cdn_host=cdn_host, cdn_path=cdn_path)
+                candidates = sorted(
+                    candidates, key=lambda ip: st.res[ip].score, reverse=True
+                )
+            candidates = candidates[: round_cfg.keep]
+            await phase2_round(
+                st,
+                round_cfg,
+                candidates,
+                speed_workers,
+                speed_timeout,
+                rate_limiter=rate_limiter,
+                cdn_host=cdn_host,
+                cdn_path=cdn_path,
+            )
             calc_scores(st)
     st.finished = True
     calc_scores(st)
@@ -689,14 +759,17 @@ async def run_tui(args, deploy_mode=False):
         dashboard = Dashboard(st)
         refresh = asyncio.create_task(_refresh_loop(dashboard, st))
         scan_task = asyncio.ensure_future(
-            run_scan(st, args.workers, args.speed_workers,
-                     args.timeout, args.speed_timeout))
+            run_scan(
+                st, args.workers, args.speed_workers, args.timeout, args.speed_timeout
+            )
+        )
         old_sigint = signal.getsignal(signal.SIGINT)
 
         def _sig(sig, frame):
             st.interrupted = True
             st.finished = True
             scan_task.cancel()
+
         signal.signal(signal.SIGINT, _sig)
         try:
             await scan_task
@@ -718,7 +791,9 @@ async def run_tui(args, deploy_mode=False):
             input_method = None
             input_value = None
             continue
-        csv_path, cfg_path, full_path = do_export(st, input_value, dashboard.sort, st.top)
+        csv_path, cfg_path, full_path = do_export(
+            st, input_value, dashboard.sort, st.top
+        )
         _w(A.CLR + A.HOME + A.SHOW)
         _w(f"\n{A.CYN}{'=' * (cols - 2)}{A.RST}\n")
         _w(f" {A.BOLD}{A.GRN}Scan Complete{A.RST}\n")
@@ -793,7 +868,9 @@ async def run_tui(args, deploy_mode=False):
                         pass
             except (EOFError, KeyboardInterrupt, OSError):
                 pass
-            csv_path, cfg_path, full_path = do_export(st, input_value, dashboard.sort, st.top)
+            csv_path, cfg_path, full_path = do_export(
+                st, input_value, dashboard.sort, st.top
+            )
             _w(f"\n {A.GRN}Exported: {cfg_path}{A.RST}\n")
             _w(f" {A.DIM}Press any key...{A.RST}\n")
             _fl()
@@ -819,7 +896,9 @@ async def run_headless(args):
     st.configs = configs
     st.input_file = source
     print(f"Loaded {len(configs)} configs from {source}")
-    print(f"Mode: {st.mode}, Latency workers: {args.workers}, Speed workers: {args.speed_workers}")
+    print(
+        f"Mode: {st.mode}, Latency workers: {args.workers}, Speed workers: {args.speed_workers}"
+    )
     print(f"Latency timeout: {args.timeout}s, Speed timeout: {args.speed_timeout}s")
     print("Resolving DNS...")
     await resolve_all(st)
@@ -835,6 +914,7 @@ async def run_headless(args):
         st.interrupted = True
         st.finished = True
         scan_task.cancel()
+
     signal.signal(signal.SIGINT, _sig)
     try:
         await scan_task
@@ -901,41 +981,86 @@ Examples:
   python3 scanner.py --sub https://example.com/sub      # From subscription
   python3 scanner.py --template "vless://..." -i addrs  # From template
   python3 scanner.py --find-clean --clean-mode normal   # Clean IP finder
-""")
+""",
+    )
     parser.add_argument("-i", "--input", help="Config file (txt/json/conf/lst)")
     parser.add_argument("--sub", help="Subscription URL")
     parser.add_argument("--template", help="VLESS config template URI")
-    parser.add_argument("-m", "--mode", default="normal",
-                        choices=["normal", "fast", "mega", "xtreme"],
-                        help="Scan mode (default: normal)")
-    parser.add_argument("-w", "--workers", type=int, default=LATENCY_WORKERS,
-                        help=f"Latency test workers (default: {LATENCY_WORKERS})")
-    parser.add_argument("-s", "--speed-workers", type=int, default=SPEED_WORKERS,
-                        help=f"Speed test workers (default: {SPEED_WORKERS})")
-    parser.add_argument("-t", "--timeout", type=float, default=LATENCY_TIMEOUT,
-                        help=f"Latency timeout seconds (default: {LATENCY_TIMEOUT})")
-    parser.add_argument("--speed-timeout", type=float, default=SPEED_TIMEOUT,
-                        help=f"Speed test timeout seconds (default: {SPEED_TIMEOUT})")
-    parser.add_argument("--top", type=int, default=50,
-                        help="Top N configs to save (default: 50, 0=all)")
-    parser.add_argument("--rounds", help="Custom round sizes: 2M:100%%|1M:50%%|100K:keep")
-    parser.add_argument("--skip-download", action="store_true",
-                        help="Skip speed test, latency only")
-    parser.add_argument("--no-tui", action="store_true",
-                        help="Non-interactive mode")
-    parser.add_argument("--find-clean", action="store_true",
-                        help="Scan for clean Cloudflare IPs")
-    parser.add_argument("--clean-mode", default="normal",
-                        choices=list(CLEAN_MODES.keys()),
-                        help="Clean IP scan mode")
-    parser.add_argument("--clean-ports", nargs="*", type=int, default=CF_HTTPS_PORTS,
-                        help="Ports for clean scan (default: 443 8443)")
-    parser.add_argument("--clean-workers", type=int, default=500,
-                        help="Workers for clean scan (default: 500)")
-    parser.add_argument("--clean-scan-per-24", type=int, default=0,
-                        help="Random IPs per /24 subnet (0=all)")
-    parser.add_argument("--subnets", nargs="*",
-                        help="Subnets for clean scan (default: all CF ranges)")
+    parser.add_argument(
+        "-m",
+        "--mode",
+        default="normal",
+        choices=["normal", "fast", "mega", "xtreme"],
+        help="Scan mode (default: normal)",
+    )
+    parser.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=LATENCY_WORKERS,
+        help=f"Latency test workers (default: {LATENCY_WORKERS})",
+    )
+    parser.add_argument(
+        "-s",
+        "--speed-workers",
+        type=int,
+        default=SPEED_WORKERS,
+        help=f"Speed test workers (default: {SPEED_WORKERS})",
+    )
+    parser.add_argument(
+        "-t",
+        "--timeout",
+        type=float,
+        default=LATENCY_TIMEOUT,
+        help=f"Latency timeout seconds (default: {LATENCY_TIMEOUT})",
+    )
+    parser.add_argument(
+        "--speed-timeout",
+        type=float,
+        default=SPEED_TIMEOUT,
+        help=f"Speed test timeout seconds (default: {SPEED_TIMEOUT})",
+    )
+    parser.add_argument(
+        "--top", type=int, default=50, help="Top N configs to save (default: 50, 0=all)"
+    )
+    parser.add_argument(
+        "--rounds", help="Custom round sizes: 2M:100%%|1M:50%%|100K:keep"
+    )
+    parser.add_argument(
+        "--skip-download", action="store_true", help="Skip speed test, latency only"
+    )
+    parser.add_argument("--no-tui", action="store_true", help="Non-interactive mode")
+    parser.add_argument(
+        "--find-clean", action="store_true", help="Scan for clean Cloudflare IPs"
+    )
+    parser.add_argument(
+        "--clean-mode",
+        default="normal",
+        choices=list(CLEAN_MODES.keys()),
+        help="Clean IP scan mode",
+    )
+    parser.add_argument(
+        "--clean-ports",
+        nargs="*",
+        type=int,
+        default=CF_HTTPS_PORTS,
+        help="Ports for clean scan (default: 443 8443)",
+    )
+    parser.add_argument(
+        "--clean-workers",
+        type=int,
+        default=500,
+        help="Workers for clean scan (default: 500)",
+    )
+    parser.add_argument(
+        "--clean-scan-per-24",
+        type=int,
+        default=0,
+        help="Random IPs per /24 subnet (0=all)",
+    )
+    parser.add_argument(
+        "--subnets", nargs="*", help="Subnets for clean scan (default: all CF ranges)"
+    )
     parser.add_argument("--xray-bin", help="Path to xray binary")
     parser.add_argument("--output-csv", help="Override CSV output path")
     parser.add_argument("--output-configs", help="Override configs output path")

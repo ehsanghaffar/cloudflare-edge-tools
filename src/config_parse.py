@@ -6,7 +6,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 from src.constants import SPEED_HOST
 from src.models import ConfigEntry, RoundCfg

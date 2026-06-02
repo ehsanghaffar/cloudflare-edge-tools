@@ -6,7 +6,7 @@ import ssl
 import time
 from typing import List, Optional, Tuple
 
-from src.constants import CF_SUBNETS, SPEED_HOST, _is_cf_address
+from src.constants import SPEED_HOST
 from src.models import CleanScanState
 from src.utils import _dbg
 

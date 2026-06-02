@@ -3,11 +3,9 @@ import base64
 import copy
 import json
 import os
-import random
 import re
 import secrets
 import shutil
-import signal
 import socket
 import ssl
 import subprocess
@@ -19,11 +17,11 @@ from typing import Dict, List, Optional, Tuple
 
 from src.constants import (SPEED_HOST, SPEED_PATH, XRAY_BASE_PORT, XRAY_BIN_DIR,
                            XRAY_CONFIG_TEMPLATE, XRAY_CONNECT_TIMEOUT, XRAY_FRAG_PRESETS,
-                           XRAY_HOME, XRAY_PROFILES_DIR, XRAY_QUICK_SIZE, XRAY_QUICK_TIMEOUT,
-                           XRAY_SPEED_SIZE, XRAY_SPEED_TIMEOUT, XRAY_TMP_DIR, CDN_FALLBACK,
-                           DEBUG_LOG, _CF_PREFLIGHT_IPS, _generate_random_cf_ips, _is_cf_address)
+                            XRAY_QUICK_SIZE, XRAY_QUICK_TIMEOUT,
+                             XRAY_TMP_DIR,
+                            _CF_PREFLIGHT_IPS, _is_cf_address)
 from src.config_parse import parse_vless_full, parse_vmess_full, _infer_orig_sni
-from src.models import (ConfigEntry, PipelineConfig, Result, State, XrayTestState, XrayVariation)
+from src.models import ( PipelineConfig, XrayTestState, XrayVariation)
 from src.rate_limiter import CFRateLimiter
 from src.utils import _dbg, _WsFrameParser, _ws_frame_encode
 

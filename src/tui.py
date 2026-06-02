@@ -9,36 +9,58 @@ import sys
 import time
 from typing import Dict, List, Optional, Tuple
 
-from src.constants import (A, ANSI, CLEAN_MODES, RESULTS_DIR, SPEED_HOST,
-                           XRAY_BIN_DIR, XRAY_TMP_DIR, _CF_NETS, _CF_PREFLIGHT_IPS,
-                           _generate_random_cf_ips, _is_cf_address, _resolve_is_cf,
-                           CDN_FALLBACK, CF_SUBNETS, CF_HTTPS_PORTS, LATENCY_TIMEOUT,
-                           LATENCY_WORKERS, SPEED_TIMEOUT, SPEED_WORKERS, PRESETS,
-                           VERSION, DEBUG_LOG, XRAY_FRAG_PRESETS, XRAY_CONFIG_TEMPLATE,
-                           XRAY_CONNECT_TIMEOUT, XRAY_HOME, XRAY_PROFILES_DIR,
-                           XRAY_QUICK_SIZE, XRAY_QUICK_TIMEOUT, XRAY_SPEED_SIZE,
-                           XRAY_SPEED_TIMEOUT, XRAY_BASE_PORT, XRAY_BIN_DIR,
-                           CF_TEST_IPS)
-from src.clean_finder import split_to_24_blocks, probe_tls_handshake, generate_cf_ips, scan_clean_ips
-from src.config_parse import (fetch_sub, generate_from_template, load_addresses,
-                              load_input, parse_config, parse_rounds_str, parse_size,
-                              parse_vless_full, parse_vmess_full)
-from src.models import (CleanScanState, ConfigEntry, DeployState, PipelineConfig,
-                        Result, RoundCfg, State, XrayTestState, XrayVariation,
-                        calc_scores, sorted_alive, sorted_all)
+from src.constants import (
+    A,
+    CLEAN_MODES,
+    RESULTS_DIR,
+    _is_cf_address,
+    _resolve_is_cf,
+    CF_SUBNETS,
+    CF_HTTPS_PORTS,
+    PRESETS,
+    VERSION,
+    XRAY_FRAG_PRESETS,
+    CF_TEST_IPS,
+)
+from src.clean_finder import (
+    generate_cf_ips,
+    scan_clean_ips,
+)
+from src.config_parse import (
+    parse_config,
+    parse_vless_full,
+    parse_vmess_full,
+)
+from src.models import (
+    CleanScanState,
+    PipelineConfig,
+    Result,
+    State,
+    XrayTestState,
+    sorted_all,
+)
 from src.rate_limiter import CFRateLimiter
 from src.speed_test import phase1, phase2_round
-from src.utils import (_dbg, _fmt_elapsed, _flush_stdin, _prompt_number,
-                       _read_key_blocking, _read_key_nb, _restore_console_input,
-                       _vl, _w, _fl, _wait_any_key, enable_ansi, term_size)
-from src.xray_utils import (_build_uri, _extract_vless_ws_params, _find_free_ports,
-                            _test_single_variation, _vless_ws_read_tunnel,
-                            _vless_ws_speed_test, _xray_calc_scores,
-                            _xray_speed_test_blocking, build_vless_uri,
-                            build_vmess_uri, build_xray_config, expand_custom_ips,
-                            generate_pipeline_variations, generate_xray_variations,
-                            switch_transport, xray_find_binary, xray_install,
-                            xray_pipeline_test, xray_speed_test, XrayProcess)
+from src.utils import (
+    _dbg,
+    _fmt_elapsed,
+    _read_key_blocking,
+    _read_key_nb,
+    _restore_console_input,
+    _vl,
+    _w,
+    _fl,
+    _wait_any_key,
+    enable_ansi,
+    term_size,
+)
+from src.xray_utils import (
+    _xray_calc_scores,
+    expand_custom_ips,
+    xray_find_binary,
+    xray_install,
+    xray_pipeline_test,
+)
 
 
 def _results_path(filename: str) -> str:
@@ -48,15 +70,25 @@ def _results_path(filename: str) -> str:
 
 def find_config_files() -> List[Tuple[str, str, int]]:
     results: List[Tuple[str, str, int]] = []
-    for ext, ftype in [("*.txt", "txt"), ("*.json", "json"), ("*.conf", "config"), ("*.lst", "list")]:
+    for ext, ftype in [
+        ("*.txt", "txt"),
+        ("*.json", "json"),
+        ("*.conf", "config"),
+        ("*.lst", "list"),
+    ]:
         for path in glob.glob(ext):
             try:
                 with open(path, "r", encoding="utf-8") as f:
-                    count = sum(1 for line in f if line.strip() and not line.startswith("#"))
+                    count = sum(
+                        1 for line in f if line.strip() and not line.startswith("#")
+                    )
             except OSError:
                 count = 0
             results.append((path, ftype, count))
-    results.sort(key=lambda x: os.path.getmtime(x[0]) if os.path.isfile(x[0]) else 0, reverse=True)
+    results.sort(
+        key=lambda x: os.path.getmtime(x[0]) if os.path.isfile(x[0]) else 0,
+        reverse=True,
+    )
     return results
 
 
@@ -94,7 +126,7 @@ def _help_show_page(title: str, content: List[str]):
         cols, rows = term_size()
         bx = BoxRenderer(cols - 2)
         visible = max(3, rows - 8)
-        page = content[scroll:scroll + visible]
+        page = content[scroll : scroll + visible]
         max_scroll = max(0, len(content) - visible)
 
         bx.top()
@@ -169,9 +201,17 @@ def _help_getting_started() -> List[str]:
         f"   {A.WHT} t {A.RST}  Template + address list mode",
         f"   {A.WHT} f {A.RST}  Find clean Cloudflare IPs",
         f"   {A.WHT} x {A.RST}  Xray pipeline test (fragment + transport)",
-        *([ f"   {A.WHT} d {A.RST}  Deploy Xray on a Linux VPS"] if sys.platform == "linux" else []),
+        *(
+            [f"   {A.WHT} d {A.RST}  Deploy Xray on a Linux VPS"]
+            if sys.platform == "linux"
+            else []
+        ),
         f"   {A.WHT} o {A.RST}  Worker Proxy (fresh workers.dev SNI)",
-        *([ f"   {A.WHT} c {A.RST}  Connection Manager"] if sys.platform == "linux" else []),
+        *(
+            [f"   {A.WHT} c {A.RST}  Connection Manager"]
+            if sys.platform == "linux"
+            else []
+        ),
         f"   {A.WHT} h {A.RST}  This help menu",
         f"   {A.WHT} q {A.RST}  Quit",
         "",
@@ -502,13 +542,31 @@ def _help_cli_reference() -> List[str]:
 
 def tui_show_guide():
     pages = [
-        ("Getting Started",            "First steps, basic workflow, scoring",     _help_getting_started),
-        ("Scan & Test Modes",          "File scan, subscription, template",        _help_scan_modes),
-        ("Xray Pipeline Test",         "Fragment + transport pipeline testing",    _help_xray_test),
-        ("Clean IP Finder",            "Find reachable Cloudflare edge IPs",      _help_clean_finder),
-        *([ ("Deploy & Server Management", "Install Xray on VPS, manage connections", _help_deploy)] if sys.platform == "linux" else []),
-        ("Worker Proxy",               "Fresh workers.dev SNI for any config",    _help_worker_proxy),
-        ("CLI Reference",              "All command-line flags and examples",      _help_cli_reference),
+        (
+            "Getting Started",
+            "First steps, basic workflow, scoring",
+            _help_getting_started,
+        ),
+        ("Scan & Test Modes", "File scan, subscription, template", _help_scan_modes),
+        (
+            "Xray Pipeline Test",
+            "Fragment + transport pipeline testing",
+            _help_xray_test,
+        ),
+        ("Clean IP Finder", "Find reachable Cloudflare edge IPs", _help_clean_finder),
+        *(
+            [
+                (
+                    "Deploy & Server Management",
+                    "Install Xray on VPS, manage connections",
+                    _help_deploy,
+                )
+            ]
+            if sys.platform == "linux"
+            else []
+        ),
+        ("Worker Proxy", "Fresh workers.dev SNI for any config", _help_worker_proxy),
+        ("CLI Reference", "All command-line flags and examples", _help_cli_reference),
     ]
     while True:
         _w(A.CLR + A.HOME + A.HIDE)
@@ -562,7 +620,12 @@ def _clean_pick_mode() -> Optional[str]:
         bx.line(f" {A.BOLD}Select scan scope:{A.RST}")
         bx.blank()
 
-        for name, key in [("quick", "1"), ("normal", "2"), ("full", "3"), ("mega", "4")]:
+        for name, key in [
+            ("quick", "1"),
+            ("normal", "2"),
+            ("full", "3"),
+            ("mega", "4"),
+        ]:
             cfg = CLEAN_MODES[name]
             num = f"{A.CYN}{A.BOLD}{key}{A.RST}"
             lbl = f"{A.BOLD}{cfg['label']}{A.RST}"
@@ -601,7 +664,11 @@ def _draw_clean_progress(scan_state: CleanScanState):
     _w(A.CLR + A.HOME)
     cols, _ = term_size()
     bx = BoxRenderer(cols - 2)
-    elapsed = _fmt_elapsed(time.monotonic() - scan_state.start_time) if scan_state.start_time else "0s"
+    elapsed = (
+        _fmt_elapsed(time.monotonic() - scan_state.start_time)
+        if scan_state.start_time
+        else "0s"
+    )
     pct = scan_state.done * 100 // max(1, scan_state.total)
 
     bw = max(1, bx.w - 42)
@@ -609,8 +676,7 @@ def _draw_clean_progress(scan_state: CleanScanState):
     bar = f"{A.GRN}{'█' * filled}{A.DIM}{'░' * (bw - filled)}{A.RST}"
 
     bx.top()
-    bx.title_line(f" {A.BOLD}{A.CYN}Clean IP Finder{A.RST}",
-                    f"{A.DIM}{elapsed}{A.RST}")
+    bx.title_line(f" {A.BOLD}{A.CYN}Clean IP Finder{A.RST}", f"{A.DIM}{elapsed}{A.RST}")
     bx.sep()
     bx.line(f" {A.BOLD}{A.GRN}Scanning Cloudflare IP ranges{A.RST}")
     bx.line(f" Probing {bar} {scan_state.done:,}/{scan_state.total:,}  {pct}%")
@@ -634,7 +700,9 @@ def _draw_clean_progress(scan_state: CleanScanState):
     _fl()
 
 
-def _clean_show_results(results: List[Tuple[str, float]], elapsed: str) -> Optional[str]:
+def _clean_show_results(
+    results: List[Tuple[str, float]], elapsed: str
+) -> Optional[str]:
     MAX_SHOW = 300
     display = results[:MAX_SHOW]
     offset = 0
@@ -650,7 +718,8 @@ def _clean_show_results(results: List[Tuple[str, float]], elapsed: str) -> Optio
         if results:
             bx.line(
                 f" {A.BOLD}{A.GRN}Scan Complete!{A.RST}  "
-                f"Found {A.BOLD}{len(results):,}{A.RST} clean IPs in {elapsed}")
+                f"Found {A.BOLD}{len(results):,}{A.RST} clean IPs in {elapsed}"
+            )
         else:
             bx.line(f" {A.YEL}Scan Complete — no clean IPs found.{A.RST}")
         bx.sep()
@@ -710,8 +779,12 @@ def _clean_show_results(results: List[Tuple[str, float]], elapsed: str) -> Optio
         if key == "t" and results:
             _w(A.SHOW)
             _w(f"\n {A.BOLD}{A.CYN}Speed Test with Clean IPs{A.RST}\n")
-            _w(f" {A.DIM}Paste a VLESS/VMess config URI. The address in it will be{A.RST}\n")
-            _w(f" {A.DIM}replaced with each clean IP, then all configs get speed-tested.{A.RST}\n\n")
+            _w(
+                f" {A.DIM}Paste a VLESS/VMess config URI. The address in it will be{A.RST}\n"
+            )
+            _w(
+                f" {A.DIM}replaced with each clean IP, then all configs get speed-tested.{A.RST}\n\n"
+            )
             _restore_console_input()
             _w(f" {A.CYN}Template:{A.RST} ")
             _fl()
@@ -742,28 +815,38 @@ async def tui_run_clean_finder() -> Optional[Tuple[str, str]]:
     bx.top()
     bx.line(f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST} {A.DIM}v{VERSION}{A.RST}")
     bx.sep()
-    bx.line(f" {A.BOLD}Generating IPs from {len(CF_SUBNETS)} Cloudflare ranges...{A.RST}")
+    bx.line(
+        f" {A.BOLD}Generating IPs from {len(CF_SUBNETS)} Cloudflare ranges...{A.RST}"
+    )
     bx.bottom()
     _w("\n".join(bx.out) + "\n")
     _fl()
 
     ips = generate_cf_ips(CF_SUBNETS, scan_cfg["sample"])
     ports = scan_cfg.get("ports", [443])
-    _dbg(f"CLEAN: Generated {len(ips):,} IPs × {len(ports)} port(s), sample={scan_cfg['sample']}")
+    _dbg(
+        f"CLEAN: Generated {len(ips):,} IPs × {len(ports)} port(s), sample={scan_cfg['sample']}"
+    )
 
     scan_state = CleanScanState()
     scan_task = asyncio.ensure_future(
         scan_clean_ips(
-            ips, workers=scan_cfg["workers"], timeout=5.0,
-            validate=scan_cfg["validate"], scan_state=scan_state, ports=ports,
+            ips,
+            workers=scan_cfg["workers"],
+            timeout=5.0,
+            validate=scan_cfg["validate"],
+            scan_state=scan_state,
+            ports=ports,
         )
     )
 
     old_sigint = signal.getsignal(signal.SIGINT)
     _loop = asyncio.get_running_loop()
+
     def _sig(sig, frame):
         scan_state.interrupted = True
         _loop.call_soon_threadsafe(scan_task.cancel)
+
     signal.signal(signal.SIGINT, _sig)
 
     _w(A.CLR + A.HIDE)
@@ -781,12 +864,20 @@ async def tui_run_clean_finder() -> Optional[Tuple[str, str]]:
     try:
         results = await scan_task
     except asyncio.CancelledError:
-        results = sorted(scan_state.all_results or scan_state.results, key=lambda x: x[1])
+        results = sorted(
+            scan_state.all_results or scan_state.results, key=lambda x: x[1]
+        )
     except Exception as e:
         _dbg(f"CLEAN: scan_task error: {e}")
-        results = sorted(scan_state.all_results or scan_state.results, key=lambda x: x[1])
+        results = sorted(
+            scan_state.all_results or scan_state.results, key=lambda x: x[1]
+        )
 
-    elapsed = _fmt_elapsed(time.monotonic() - scan_state.start_time) if scan_state.start_time > 0 else "0s"
+    elapsed = (
+        _fmt_elapsed(time.monotonic() - scan_state.start_time)
+        if scan_state.start_time > 0
+        else "0s"
+    )
     _dbg(f"CLEAN: Done in {elapsed}. Found {len(results):,} / {len(ips):,}")
 
     action = _clean_show_results(results, elapsed)
@@ -853,8 +944,10 @@ def tui_pick_file() -> Optional[Tuple[str, str]]:
         cols, _ = term_size()
         bx = BoxRenderer(cols - 2)
         bx.top()
-        bx.title_line(f" ⚡ {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}",
-                        f"{A.DIM}Cloudflare Config Scanner{A.RST}")
+        bx.title_line(
+            f" ⚡ {A.BOLD}{A.WHT}cfray{A.RST} {A.DIM}v{VERSION}{A.RST}",
+            f"{A.DIM}Cloudflare Config Scanner{A.RST}",
+        )
         bx.sep()
 
         _menu_section(bx, "LOCAL FILES", bx.w)
@@ -866,23 +959,41 @@ def tui_pick_file() -> Optional[Tuple[str, str]]:
                 bx.line(f" {num}  {name:<28} {desc}")
         else:
             bx.line(f"    {A.DIM}No config files found in current directory{A.RST}")
-            bx.line(f"    {A.DIM}Drop .txt or .json files here, or use options below{A.RST}")
+            bx.line(
+                f"    {A.DIM}Drop .txt or .json files here, or use options below{A.RST}"
+            )
         bx.blank()
 
         _menu_section(bx, "REMOTE SOURCES", bx.w)
-        bx.line(f"  {A.CYN}{A.BOLD}s{A.RST}.  {A.WHT}Subscription URL{A.RST}        {A.DIM}Fetch configs from remote URL{A.RST}")
-        bx.line(f"  {A.CYN}{A.BOLD}p{A.RST}.  {A.WHT}Enter File Path{A.RST}         {A.DIM}Load from custom file path{A.RST}")
+        bx.line(
+            f"  {A.CYN}{A.BOLD}s{A.RST}.  {A.WHT}Subscription URL{A.RST}        {A.DIM}Fetch configs from remote URL{A.RST}"
+        )
+        bx.line(
+            f"  {A.CYN}{A.BOLD}p{A.RST}.  {A.WHT}Enter File Path{A.RST}         {A.DIM}Load from custom file path{A.RST}"
+        )
         bx.blank()
 
         _menu_section(bx, "TOOLS", bx.w)
-        bx.line(f"  {A.CYN}{A.BOLD}t{A.RST}.  {A.WHT}Template + Addresses{A.RST}    {A.DIM}Test one config against many IPs{A.RST}")
-        bx.line(f"  {A.CYN}{A.BOLD}f{A.RST}.  {A.WHT}Clean IP Finder{A.RST}         {A.DIM}Scan Cloudflare IP ranges{A.RST}")
-        bx.line(f"  {A.CYN}{A.BOLD}x{A.RST}.  {A.WHT}Xray Pipeline Test{A.RST}      {A.DIM}Smart: probe → validate → expand → speed{A.RST}")
+        bx.line(
+            f"  {A.CYN}{A.BOLD}t{A.RST}.  {A.WHT}Template + Addresses{A.RST}    {A.DIM}Test one config against many IPs{A.RST}"
+        )
+        bx.line(
+            f"  {A.CYN}{A.BOLD}f{A.RST}.  {A.WHT}Clean IP Finder{A.RST}         {A.DIM}Scan Cloudflare IP ranges{A.RST}"
+        )
+        bx.line(
+            f"  {A.CYN}{A.BOLD}x{A.RST}.  {A.WHT}Xray Pipeline Test{A.RST}      {A.DIM}Smart: probe → validate → expand → speed{A.RST}"
+        )
         if sys.platform == "linux":
-            bx.line(f"  {A.CYN}{A.BOLD}d{A.RST}.  {A.WHT}Deploy Xray Server{A.RST}    {A.DIM}Install Xray on Linux VPS{A.RST}")
-        bx.line(f"  {A.CYN}{A.BOLD}o{A.RST}.  {A.WHT}Worker Proxy{A.RST}          {A.DIM}Fresh workers.dev SNI for any VLESS config{A.RST}")
+            bx.line(
+                f"  {A.CYN}{A.BOLD}d{A.RST}.  {A.WHT}Deploy Xray Server{A.RST}    {A.DIM}Install Xray on Linux VPS{A.RST}"
+            )
+        bx.line(
+            f"  {A.CYN}{A.BOLD}o{A.RST}.  {A.WHT}Worker Proxy{A.RST}          {A.DIM}Fresh workers.dev SNI for any VLESS config{A.RST}"
+        )
         if sys.platform == "linux":
-            bx.line(f"  {A.CYN}{A.BOLD}c{A.RST}.  {A.WHT}Connection Manager{A.RST}    {A.DIM}Manage existing Xray server configs{A.RST}")
+            bx.line(
+                f"  {A.CYN}{A.BOLD}c{A.RST}.  {A.WHT}Connection Manager{A.RST}    {A.DIM}Manage existing Xray server configs{A.RST}"
+            )
         bx.blank()
         bx.line(f" {A.DIM}[h] Help    [q] Quit{A.RST}")
         bx.bottom()
@@ -912,7 +1023,9 @@ def tui_pick_file() -> Optional[Tuple[str, str]]:
         if key == "s":
             _w(A.SHOW)
             _w(f"\n {A.BOLD}{A.CYN}Subscription URL{A.RST}\n")
-            _w(f" {A.DIM}Paste a URL that contains VLESS/VMess configs (plain text or base64).{A.RST}\n")
+            _w(
+                f" {A.DIM}Paste a URL that contains VLESS/VMess configs (plain text or base64).{A.RST}\n"
+            )
             _w(f" {A.DIM}Example: https://example.com/sub.txt{A.RST}\n\n")
             _fl()
             url = _tui_prompt_text("URL:")
@@ -927,10 +1040,16 @@ def tui_pick_file() -> Optional[Tuple[str, str]]:
         if key == "t":
             _w(A.SHOW)
             _w(f"\n {A.BOLD}{A.CYN}Template + Address List{A.RST}\n")
-            _w(f" {A.DIM}This mode takes ONE working config and a list of Cloudflare IPs/domains.{A.RST}\n")
-            _w(f" {A.DIM}It replaces the address in your config with each IP from the list,{A.RST}\n")
+            _w(
+                f" {A.DIM}This mode takes ONE working config and a list of Cloudflare IPs/domains.{A.RST}\n"
+            )
+            _w(
+                f" {A.DIM}It replaces the address in your config with each IP from the list,{A.RST}\n"
+            )
             _w(f" {A.DIM}then tests all of them to find the fastest.{A.RST}\n\n")
-            _w(f" {A.BOLD}Step 1:{A.RST} {A.CYN}Paste your VLESS/VMess config URI:{A.RST}\n")
+            _w(
+                f" {A.BOLD}Step 1:{A.RST} {A.CYN}Paste your VLESS/VMess config URI:{A.RST}\n"
+            )
             _w(f" {A.DIM}(a full vless://... or vmess://... URI){A.RST}\n ")
             _restore_console_input()
             _fl()
@@ -943,7 +1062,9 @@ def tui_pick_file() -> Optional[Tuple[str, str]]:
                 _fl()
                 time.sleep(1.5)
                 continue
-            _w(f"\n {A.BOLD}Step 2:{A.RST} {A.CYN}Enter path to address list file:{A.RST}\n")
+            _w(
+                f"\n {A.BOLD}Step 2:{A.RST} {A.CYN}Enter path to address list file:{A.RST}\n"
+            )
             _w(f" {A.DIM}(a .txt file with one IP or domain per line){A.RST}\n")
             _fl()
             addr_path = _tui_prompt_text("Path:")
@@ -1094,34 +1215,60 @@ class XrayDashboard(Component):
                     v.score = round(lat * 0.35 + spd * 0.50 + ttfb * 0.15, 1)
 
     def draw_header(self, bx: BoxRenderer, xst: XrayTestState):
-        elapsed = _fmt_elapsed(time.monotonic() - xst.start_time) if xst.start_time else "0s"
-        pipeline = getattr(xst, 'pipeline_mode', False)
-        title = f" {A.BOLD}{A.WHT}Xray Pipeline Test{A.RST}" if pipeline else f" {A.BOLD}{A.WHT}Xray Proxy Test{A.RST}"
+        elapsed = (
+            _fmt_elapsed(time.monotonic() - xst.start_time) if xst.start_time else "0s"
+        )
+        pipeline = getattr(xst, "pipeline_mode", False)
+        title = (
+            f" {A.BOLD}{A.WHT}Xray Pipeline Test{A.RST}"
+            if pipeline
+            else f" {A.BOLD}{A.WHT}Xray Proxy Test{A.RST}"
+        )
         right = f"{A.DIM}{elapsed}  |  ^C stop{A.RST}"
         bx.top()
         bx.title_line(title, right)
         bx.sep()
-        src = xst.source_uri[:60] + "..." if len(xst.source_uri) > 60 else xst.source_uri
+        src = (
+            xst.source_uri[:60] + "..." if len(xst.source_uri) > 60 else xst.source_uri
+        )
         bx.line(f" {A.DIM}Config:{A.RST} {src}")
-        bx.line(f" {A.DIM}Variations:{A.RST} {len(xst.variations)}  "
-                f"{A.GRN}{xst.alive_count} alive{A.RST}  "
-                f"{A.RED}{xst.dead_count} dead{A.RST}")
+        bx.line(
+            f" {A.DIM}Variations:{A.RST} {len(xst.variations)}  "
+            f"{A.GRN}{xst.alive_count} alive{A.RST}  "
+            f"{A.RED}{xst.dead_count} dead{A.RST}"
+        )
         bx.sep()
 
     def draw_progress(self, bx: BoxRenderer, xst: XrayTestState):
         bw = max(1, min(24, bx.w - 50))
-        is_pipeline = getattr(xst, 'pipeline_mode', False)
+        is_pipeline = getattr(xst, "pipeline_mode", False)
 
         if is_pipeline:
             stage_stats = {
                 "ip_scan": f"{len(xst.live_ips)} CF confirmed" if xst.live_ips else "",
-                "base_test": (f"{len(xst.working_ips)} working" if xst.working_ips
-                              else f"0 working" if xst.pipeline_stages[1]["status"] in ("done", "interrupted")
-                              else ""),
-                "expansion": (f"{xst.quick_passed} alive" if xst.quick_passed
-                              else f"{xst.alive_count} alive" if xst.alive_count
-                              else f"0 alive" if xst.pipeline_stages[2]["status"] in ("done", "interrupted")
-                              else ""),
+                "base_test": (
+                    f"{len(xst.working_ips)} working"
+                    if xst.working_ips
+                    else (
+                        f"0 working"
+                        if xst.pipeline_stages[1]["status"] in ("done", "interrupted")
+                        else ""
+                    )
+                ),
+                "expansion": (
+                    f"{xst.quick_passed} alive"
+                    if xst.quick_passed
+                    else (
+                        f"{xst.alive_count} alive"
+                        if xst.alive_count
+                        else (
+                            f"0 alive"
+                            if xst.pipeline_stages[2]["status"]
+                            in ("done", "interrupted")
+                            else ""
+                        )
+                    )
+                ),
             }
             for i, stage in enumerate(xst.pipeline_stages):
                 st = stage["status"]
@@ -1131,27 +1278,37 @@ class XrayDashboard(Component):
                     stat_color = A.RED if stat.startswith("0 ") else A.GRN
                     bx.line(f" {A.GRN}v{A.RST} {label} {stat_color}{stat}{A.RST}")
                 elif st == "active":
-                    pct = xst.done_count * 100 // max(1, xst.total) if xst.total > 0 else 0
-                    bx.line(f" {A.GRN}>{A.RST} {A.BOLD}{label}{A.RST}"
-                            f"[{self._bar(xst.done_count, xst.total, bw)}] "
-                            f"{xst.done_count}/{xst.total}  {pct}%")
+                    pct = (
+                        xst.done_count * 100 // max(1, xst.total)
+                        if xst.total > 0
+                        else 0
+                    )
+                    bx.line(
+                        f" {A.GRN}>{A.RST} {A.BOLD}{label}{A.RST}"
+                        f"[{self._bar(xst.done_count, xst.total, bw)}] "
+                        f"{xst.done_count}/{xst.total}  {pct}%"
+                    )
                 elif st == "interrupted":
                     bx.line(f" {A.YEL}!{A.RST} {label} {A.YEL}interrupted{A.RST}")
                 else:
                     bx.line(f" {A.DIM}o {label} waiting...{A.RST}")
-            pf_warn = getattr(xst, 'preflight_warning', '')
+            pf_warn = getattr(xst, "preflight_warning", "")
             if pf_warn:
-                pf_text = pf_warn[:bx.w - 6] if len(pf_warn) > bx.w - 6 else pf_warn
+                pf_text = pf_warn[: bx.w - 6] if len(pf_warn) > bx.w - 6 else pf_warn
                 bx.line(f" {A.YEL}! {pf_text}{A.RST}")
         elif xst.finished and xst.interrupted:
             if xst.phase == "quick_filter":
-                bx.line(f" {A.YEL}!{A.RST} Quick Filter   {A.YEL}interrupted ({xst.alive_count} passed){A.RST}")
+                bx.line(
+                    f" {A.YEL}!{A.RST} Quick Filter   {A.YEL}interrupted ({xst.alive_count} passed){A.RST}"
+                )
             elif xst.phase == "speed_test":
                 qp = xst.quick_passed or xst.alive_count
                 bx.line(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
                 bx.line(f" {A.YEL}!{A.RST} Speed Test     {A.YEL}interrupted{A.RST}")
             else:
-                bx.line(f" {A.YEL}!{A.RST} Quick Filter   {A.YEL}interrupted before starting{A.RST}")
+                bx.line(
+                    f" {A.YEL}!{A.RST} Quick Filter   {A.YEL}interrupted before starting{A.RST}"
+                )
         elif xst.finished:
             qp = xst.quick_passed or xst.alive_count
             bx.line(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
@@ -1159,39 +1316,52 @@ class XrayDashboard(Component):
                 bx.line(f" {A.GRN}v{A.RST} Speed Test     {A.GRN}done{A.RST}")
         elif xst.phase == "quick_filter":
             pct = xst.done_count * 100 // max(1, xst.total)
-            bx.line(f" {A.GRN}>{A.RST} {A.BOLD}Quick Filter{A.RST}   [{self._bar(xst.done_count, xst.total, bw)}] "
-                    f"{xst.done_count}/{xst.total}  {pct}%")
+            bx.line(
+                f" {A.GRN}>{A.RST} {A.BOLD}Quick Filter{A.RST}   [{self._bar(xst.done_count, xst.total, bw)}] "
+                f"{xst.done_count}/{xst.total}  {pct}%"
+            )
         elif xst.phase == "speed_test":
             qp = xst.quick_passed or xst.alive_count
             bx.line(f" {A.GRN}v{A.RST} Quick Filter   {A.GRN}{qp} passed{A.RST}")
             pct = xst.done_count * 100 // max(1, xst.total)
-            bx.line(f" {A.GRN}>{A.RST} {A.BOLD}Speed Test{A.RST}     [{self._bar(xst.done_count, xst.total, bw)}] "
-                    f"{xst.done_count}/{xst.total}  {pct}%")
+            bx.line(
+                f" {A.GRN}>{A.RST} {A.BOLD}Speed Test{A.RST}     [{self._bar(xst.done_count, xst.total, bw)}] "
+                f"{xst.done_count}/{xst.total}  {pct}%"
+            )
         else:
             bx.line(f" {A.DIM}o Quick Filter   starting...{A.RST}")
 
     def draw_table(self, bx: BoxRenderer, xst: XrayTestState, rows_visible: int):
         multi_ip = any(v.tag.count("|") >= 2 for v in xst.variations[:3])
         if multi_ip:
-            hdr = (f" {A.BOLD}{'#':>3}  {'IP':<18} {'SNI':<20} {'Frag':>8}  "
-                   f"{'Conn':>6}  {'TTFB':>6}  {'Score':>5}{A.RST}")
+            hdr = (
+                f" {A.BOLD}{'#':>3}  {'IP':<18} {'SNI':<20} {'Frag':>8}  "
+                f"{'Conn':>6}  {'TTFB':>6}  {'Score':>5}{A.RST}"
+            )
             bx.line(hdr)
-            bx.line(f" {A.DIM}{'─'*3}  {'─'*18} {'─'*20} {'─'*8}  {'─'*6}  {'─'*6}  {'─'*5}{A.RST}")
+            bx.line(
+                f" {A.DIM}{'─'*3}  {'─'*18} {'─'*20} {'─'*8}  {'─'*6}  {'─'*6}  {'─'*5}{A.RST}"
+            )
         else:
-            hdr = (f" {A.BOLD}{'#':>3}  {'SNI':<26} {'Fragment':>10}  "
-                   f"{'Conn':>6}  {'TTFB':>6}  {'Score':>5}{A.RST}")
+            hdr = (
+                f" {A.BOLD}{'#':>3}  {'SNI':<26} {'Fragment':>10}  "
+                f"{'Conn':>6}  {'TTFB':>6}  {'Score':>5}{A.RST}"
+            )
             bx.line(hdr)
-            bx.line(f" {A.DIM}{'─'*3}  {'─'*26} {'─'*10}  {'─'*6}  {'─'*6}  {'─'*5}{A.RST}")
+            bx.line(
+                f" {A.DIM}{'─'*3}  {'─'*26} {'─'*10}  {'─'*6}  {'─'*6}  {'─'*5}{A.RST}"
+            )
 
         sorted_vars = sorted(
             xst.variations,
             key=lambda v: (
-                -v.score if self.sort == "score"
+                -v.score
+                if self.sort == "score"
                 else (v.connect_ms if v.connect_ms > 0 else 9999)
             ),
         )
 
-        page = sorted_vars[self.offset:self.offset + rows_visible]
+        page = sorted_vars[self.offset : self.offset + rows_visible]
 
         for rank, v in enumerate(page, self.offset + 1):
             frag_s = "none" if v.fragment is None else v.fragment.get("length", "?")
@@ -1207,17 +1377,20 @@ class XrayDashboard(Component):
             if not v.alive and v.error:
                 err_s = v.error[:31] if v.error else "dead"
                 pad = max(0, 31 - len(err_s))
-                row = (f" {A.DIM}{rank:>3}  {name_col}  "
-                       f"{A.RED}{err_s}{A.RST}{A.DIM}{' '*pad}{A.RST}")
+                row = (
+                    f" {A.DIM}{rank:>3}  {name_col}  "
+                    f"{A.RED}{err_s}{A.RST}{A.DIM}{' '*pad}{A.RST}"
+                )
             elif not v.alive and not v.error and v.connect_ms <= 0 and v.score <= 0:
-                row = (f" {A.DIM}{rank:>3}  {name_col}  "
-                       f"{'--':>6}  {'--':>6}  {'--':>5}{A.RST}")
+                row = (
+                    f" {A.DIM}{rank:>3}  {name_col}  "
+                    f"{'--':>6}  {'--':>6}  {'--':>5}{A.RST}"
+                )
             else:
                 conn_s = f"{v.connect_ms:6.0f}" if v.connect_ms > 0 else f"{'--':>6}"
                 ttfb_s = f"{v.ttfb_ms:6.0f}" if v.ttfb_ms > 0 else f"{'--':>6}"
                 sc_s = self._cscore(v.score)
-                row = (f" {rank:>3}  {name_col}  "
-                       f"{conn_s}  {ttfb_s}  {sc_s}")
+                row = f" {rank:>3}  {name_col}  " f"{conn_s}  {ttfb_s}  {sc_s}"
             bx.line(row)
 
         for _ in range(rows_visible - len(page)):
@@ -1226,13 +1399,17 @@ class XrayDashboard(Component):
     def draw_footer(self, bx: BoxRenderer, xst: XrayTestState):
         if xst.finished:
             if bx.w >= 100:
-                footer = (f" {A.CYN}[S]{A.RST} Sort  {A.CYN}[E]{A.RST} Export  "
-                          f"{A.CYN}[C]{A.RST} View URI  "
-                          f"{A.CYN}[J/K]{A.RST} Scroll  {A.CYN}[N/P]{A.RST} Page  "
-                          f"{A.CYN}[B]{A.RST} Back  {A.CYN}[Q]{A.RST} Quit")
+                footer = (
+                    f" {A.CYN}[S]{A.RST} Sort  {A.CYN}[E]{A.RST} Export  "
+                    f"{A.CYN}[C]{A.RST} View URI  "
+                    f"{A.CYN}[J/K]{A.RST} Scroll  {A.CYN}[N/P]{A.RST} Page  "
+                    f"{A.CYN}[B]{A.RST} Back  {A.CYN}[Q]{A.RST} Quit"
+                )
                 bx.line(footer)
             else:
-                bx.line(f" {A.CYN}[S]{A.RST}ort {A.CYN}[E]{A.RST}xp {A.CYN}[C]{A.RST}URI {A.CYN}[B]{A.RST}ack {A.CYN}[Q]{A.RST}uit")
+                bx.line(
+                    f" {A.CYN}[S]{A.RST}ort {A.CYN}[E]{A.RST}xp {A.CYN}[C]{A.RST}URI {A.CYN}[B]{A.RST}ack {A.CYN}[Q]{A.RST}uit"
+                )
                 bx.line(f" {A.CYN}[J/K]{A.RST} Scroll  {A.CYN}[N/P]{A.RST} Page")
             if xst.export_error:
                 bx.line(f" {A.RED}{xst.export_error}{A.RST}")
@@ -1295,23 +1472,43 @@ def xray_save_results(xst: XrayTestState, top: int = 10) -> Tuple[str, str]:
 
     sorted_vars = sorted(
         [v for v in xst.variations if v.alive],
-        key=lambda v: v.score, reverse=True,
+        key=lambda v: v.score,
+        reverse=True,
     )
 
     csv_path = _results_path(f"xray_{ts}_results.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["Rank", "Tag", "SNI", "Fragment", "Connect_ms", "TTFB_ms",
-                     "Speed_MBps", "Score", "Error", "URI"])
+        w.writerow(
+            [
+                "Rank",
+                "Tag",
+                "SNI",
+                "Fragment",
+                "Connect_ms",
+                "TTFB_ms",
+                "Speed_MBps",
+                "Score",
+                "Error",
+                "URI",
+            ]
+        )
         for rank, v in enumerate(sorted_vars, 1):
             frag_s = json.dumps(v.fragment) if v.fragment else ""
-            w.writerow([
-                rank, v.tag, v.sni, frag_s,
-                f"{v.connect_ms:.0f}" if v.connect_ms > 0 else "",
-                f"{v.ttfb_ms:.0f}" if v.ttfb_ms > 0 else "",
-                f"{v.speed_mbps:.3f}" if v.speed_mbps > 0 else "",
-                f"{v.score:.1f}", v.error, v.result_uri,
-            ])
+            w.writerow(
+                [
+                    rank,
+                    v.tag,
+                    v.sni,
+                    frag_s,
+                    f"{v.connect_ms:.0f}" if v.connect_ms > 0 else "",
+                    f"{v.ttfb_ms:.0f}" if v.ttfb_ms > 0 else "",
+                    f"{v.speed_mbps:.3f}" if v.speed_mbps > 0 else "",
+                    f"{v.score:.1f}",
+                    v.error,
+                    v.result_uri,
+                ]
+            )
 
     uri_path = _results_path(f"xray_{ts}_top{top}.txt")
     with open(uri_path, "w", encoding="utf-8") as f:
@@ -1327,7 +1524,9 @@ def xray_save_results(xst: XrayTestState, top: int = 10) -> Tuple[str, str]:
 
 
 async def _run_pipeline_core(
-    xst: "XrayTestState", pcfg: "PipelineConfig", xray_bin: str,
+    xst: "XrayTestState",
+    pcfg: "PipelineConfig",
+    xray_bin: str,
 ) -> "XrayDashboard":
     xst.source_uri = pcfg.uri
     xst.xray_bin = xray_bin
@@ -1353,6 +1552,7 @@ async def _run_pipeline_core(
         xst.interrupted = True
         xst.finished = True
         _loop_pl.call_soon_threadsafe(pipeline_task.cancel)
+
     signal.signal(signal.SIGINT, _sig)
 
     try:
@@ -1379,7 +1579,9 @@ async def _run_pipeline_core(
 
 
 async def _post_pipeline_results(
-    xst: "XrayTestState", xdash: "XrayDashboard", args,
+    xst: "XrayTestState",
+    xdash: "XrayDashboard",
+    args,
 ) -> None:
     top_n = getattr(args, "xray_keep", 10)
     csv_p = uri_p = ""
@@ -1411,7 +1613,8 @@ async def _post_pipeline_results(
             elif act == "view_uri":
                 alive = sorted(
                     [v for v in xst.variations if v.alive],
-                    key=lambda v: v.score, reverse=True,
+                    key=lambda v: v.score,
+                    reverse=True,
                 )
                 if alive and alive[0].result_uri:
                     while True:
@@ -1419,11 +1622,17 @@ async def _post_pipeline_results(
                         _w(f"\n {A.BOLD}Top configs ({len(alive)} alive):{A.RST}\n\n")
                         for _vi, _vv in enumerate(alive[:10], 1):
                             _vc = A.GRN if _vi == 1 else A.CYN
-                            _conn_s = f"conn={_vv.connect_ms:.0f}ms" if _vv.connect_ms > 0 else ""
-                            _w(f"  {A.BOLD}#{_vi:<3}{A.RST} "
-                               f"{_vc}{_vv.sni:<28}{A.RST} "
-                               f"score={_vv.score:<6.1f} "
-                               f"{_conn_s}\n")
+                            _conn_s = (
+                                f"conn={_vv.connect_ms:.0f}ms"
+                                if _vv.connect_ms > 0
+                                else ""
+                            )
+                            _w(
+                                f"  {A.BOLD}#{_vi:<3}{A.RST} "
+                                f"{_vc}{_vv.sni:<28}{A.RST} "
+                                f"score={_vv.score:<6.1f} "
+                                f"{_conn_s}\n"
+                            )
                         if len(alive) > 10:
                             _w(f"  {A.DIM}... +{len(alive) - 10} more{A.RST}\n")
                         _w(f"\n")
@@ -1431,8 +1640,10 @@ async def _post_pipeline_results(
                             _w(f" {A.DIM}Full results: {csv_p}{A.RST}\n")
                         if uri_p:
                             _w(f" {A.DIM}Top URIs:     {uri_p}{A.RST}\n")
-                        _w(f"\n {A.YEL}Enter #{A.RST} to view full URI"
-                           f" {A.DIM}(or press Enter to go back):{A.RST} ")
+                        _w(
+                            f"\n {A.YEL}Enter #{A.RST} to view full URI"
+                            f" {A.DIM}(or press Enter to go back):{A.RST} "
+                        )
                         _fl()
                         try:
                             _choice = input().strip()
@@ -1443,15 +1654,23 @@ async def _post_pipeline_results(
                         try:
                             _idx = int(_choice.lstrip("#")) - 1
                             if 0 <= _idx < len(alive) and alive[_idx].result_uri:
-                                _conn_s2 = f"conn={alive[_idx].connect_ms:.0f}ms" if alive[_idx].connect_ms > 0 else ""
-                                _w(f"\n {A.BOLD}#{_idx + 1} "
-                                   f"(score={alive[_idx].score:.1f}"
-                                   f"{', ' + _conn_s2 if _conn_s2 else ''}):"
-                                   f"{A.RST}\n\n")
+                                _conn_s2 = (
+                                    f"conn={alive[_idx].connect_ms:.0f}ms"
+                                    if alive[_idx].connect_ms > 0
+                                    else ""
+                                )
+                                _w(
+                                    f"\n {A.BOLD}#{_idx + 1} "
+                                    f"(score={alive[_idx].score:.1f}"
+                                    f"{', ' + _conn_s2 if _conn_s2 else ''}):"
+                                    f"{A.RST}\n\n"
+                                )
                                 _w(f" {A.GRN}{alive[_idx].result_uri}{A.RST}\n")
                             else:
-                                _w(f"\n {A.RED}No config #{_choice} "
-                                   f"(1-{len(alive)} available){A.RST}\n")
+                                _w(
+                                    f"\n {A.RED}No config #{_choice} "
+                                    f"(1-{len(alive)} available){A.RST}\n"
+                                )
                         except ValueError:
                             _w(f"\n {A.RED}Enter a number 1-{len(alive)}{A.RST}\n")
                         _w(f"\n {A.DIM}Press any key to continue...{A.RST}\n")
@@ -1470,8 +1689,12 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
     _w(A.SHOW)
 
     _w(f"\n {A.BOLD}{A.CYN}Xray Pipeline Test{A.RST}\n")
-    _w(f" {A.YEL}For:{A.RST} You have a working config {A.WHT}behind Cloudflare{A.RST} and want to find the fastest IPs and fragment settings.\n")
-    _w(f" {A.DIM}Smart: probe IPs -> validate config -> expand (IPs x fragments){A.RST}\n\n")
+    _w(
+        f" {A.YEL}For:{A.RST} You have a working config {A.WHT}behind Cloudflare{A.RST} and want to find the fastest IPs and fragment settings.\n"
+    )
+    _w(
+        f" {A.DIM}Smart: probe IPs -> validate config -> expand (IPs x fragments){A.RST}\n\n"
+    )
 
     _restore_console_input()
     _w(f" {A.BOLD}Step 1:{A.RST} {A.CYN}Paste your VLESS/VMess config URI:{A.RST}\n")
@@ -1483,8 +1706,10 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
         return None
     parsed = parse_vless_full(uri) or parse_vmess_full(uri)
     if not parsed:
-        _w(f" {A.RED}Invalid VLESS/VMess URI.{A.RST}\n"); _fl()
-        time.sleep(1.5); return None
+        _w(f" {A.RED}Invalid VLESS/VMess URI.{A.RST}\n")
+        _fl()
+        time.sleep(1.5)
+        return None
 
     _proto = parsed.get("protocol", "vless")
     _net = parsed.get("type") or parsed.get("net") or "tcp"
@@ -1498,16 +1723,22 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
         _is_cf = _resolve_is_cf(_addr)
 
     _mode_label = "Cloudflare" if _is_cf else ("REALITY" if _is_reality else "Direct")
-    _w(f" {A.GRN}OK{A.RST} {_proto}/{_net}/{_sec} @ {_addr}:{_port}"
-       f" {A.DIM}({_mode_label}){A.RST}\n")
+    _w(
+        f" {A.GRN}OK{A.RST} {_proto}/{_net}/{_sec} @ {_addr}:{_port}"
+        f" {A.DIM}({_mode_label}){A.RST}\n"
+    )
     _fl()
 
     if not _is_cf and not _is_reality:
         _w(f"\n {A.RED}{'─' * 50}{A.RST}\n")
         _w(f" {A.BOLD}{A.RED}Server is not behind Cloudflare{A.RST}\n")
         _w(f" {A.RED}{'─' * 50}{A.RST}\n\n")
-        _w(f" {A.DIM}The pipeline scanner works by rotating Cloudflare IPs, SNIs,{A.RST}\n")
-        _w(f" {A.DIM}and fragment settings. This only works when your server is{A.RST}\n")
+        _w(
+            f" {A.DIM}The pipeline scanner works by rotating Cloudflare IPs, SNIs,{A.RST}\n"
+        )
+        _w(
+            f" {A.DIM}and fragment settings. This only works when your server is{A.RST}\n"
+        )
         _w(f" {A.DIM}behind the Cloudflare CDN.{A.RST}\n\n")
         _w(f" {A.DIM}Press any key to go back...{A.RST}\n")
         _fl()
@@ -1515,19 +1746,27 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
         return None
 
     if _is_reality:
-        _w(f"\n {A.DIM}REALITY config -- testing with original SNI, no fragments.{A.RST}\n")
-        _w(f" {A.DIM}Pipeline will validate connectivity on the original server.{A.RST}\n")
+        _w(
+            f"\n {A.DIM}REALITY config -- testing with original SNI, no fragments.{A.RST}\n"
+        )
+        _w(
+            f" {A.DIM}Pipeline will validate connectivity on the original server.{A.RST}\n"
+        )
         _fl()
         return PipelineConfig(
-            uri=uri, parsed=parsed,
-            sni_pool=[], frag_preset="none",
+            uri=uri,
+            parsed=parsed,
+            sni_pool=[],
+            frag_preset="none",
             transport_variants=[],
         )
 
     sni_pool = []
 
     _w(f"\n {A.BOLD}Step 2:{A.RST} {A.CYN}Fragment settings (DPI bypass):{A.RST}\n")
-    _w(f"  {A.CYN}1{A.RST}. All presets (none + light + medium + heavy) {A.GRN}(recommended){A.RST}\n")
+    _w(
+        f"  {A.CYN}1{A.RST}. All presets (none + light + medium + heavy) {A.GRN}(recommended){A.RST}\n"
+    )
     _w(f"  {A.CYN}2{A.RST}. No fragmentation\n")
     _w(f"  {A.CYN}3{A.RST}. Light only\n")
     _w(f"  {A.CYN}4{A.RST}. Heavy only\n")
@@ -1541,22 +1780,32 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
     frag_preset = frag_map.get(frag_ch, "all")
 
     transport_variants = []
-    _w(f"\n {A.DIM}Transport: {A.WHT}{_net}{A.RST}{A.DIM} (from config -- only testing {_net}){A.RST}\n")
+    _w(
+        f"\n {A.DIM}Transport: {A.WHT}{_net}{A.RST}{A.DIM} (from config -- only testing {_net}){A.RST}\n"
+    )
 
     _w(f"\n {A.BOLD}Step 3:{A.RST} {A.CYN}IP source:{A.RST}\n")
-    _w(f"  {A.CYN}1{A.RST}. Random CF IPs ({len(CF_TEST_IPS)} IPs across all ranges) {A.GRN}(recommended){A.RST}\n")
+    _w(
+        f"  {A.CYN}1{A.RST}. Random CF IPs ({len(CF_TEST_IPS)} IPs across all ranges) {A.GRN}(recommended){A.RST}\n"
+    )
     _clean_ip_path = os.path.join(RESULTS_DIR, "clean_ips.txt")
     _clean_count = 0
     if os.path.isfile(_clean_ip_path):
         try:
             with open(_clean_ip_path, "r") as _cf:
-                _clean_count = sum(1 for l in _cf if l.strip() and not l.startswith("#"))
+                _clean_count = sum(
+                    1 for l in _cf if l.strip() and not l.startswith("#")
+                )
         except OSError:
             pass
     if _clean_count > 0:
-        _w(f"  {A.CYN}2{A.RST}. Clean IP Finder results ({_clean_count} IPs from {_clean_ip_path})\n")
+        _w(
+            f"  {A.CYN}2{A.RST}. Clean IP Finder results ({_clean_count} IPs from {_clean_ip_path})\n"
+        )
     else:
-        _w(f"  {A.CYN}2{A.RST}. Clean IP Finder results {A.DIM}(none found -- run [f] first){A.RST}\n")
+        _w(
+            f"  {A.CYN}2{A.RST}. Clean IP Finder results {A.DIM}(none found -- run [f] first){A.RST}\n"
+        )
     _w(f"  {A.CYN}3{A.RST}. Load from file path\n")
     _w(f"  {A.CYN}4{A.RST}. Enter IPs/CIDRs manually\n")
     _w(f" Choice [1]: ")
@@ -1574,11 +1823,17 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
                 _w(f" {A.GRN}Loaded {len(custom_ips)} IPs from clean_ips.txt{A.RST}\n")
                 _fl()
             else:
-                _w(f" {A.RED}Failed to read clean_ips.txt{A.RST}\n"); _fl()
-                time.sleep(1); return None
+                _w(f" {A.RED}Failed to read clean_ips.txt{A.RST}\n")
+                _fl()
+                time.sleep(1)
+                return None
         else:
-            _w(f" {A.RED}No clean IPs found. Run Clean IP Finder [f] from the main menu first.{A.RST}\n")
-            _fl(); time.sleep(2); return None
+            _w(
+                f" {A.RED}No clean IPs found. Run Clean IP Finder [f] from the main menu first.{A.RST}\n"
+            )
+            _fl()
+            time.sleep(2)
+            return None
     elif ip_ch == "3":
         _w(f" {A.CYN}Enter file path:{A.RST}\n ")
         _w(f" {A.DIM}e.g. results/clean_ips.txt or /path/to/ips.txt{A.RST}\n ")
@@ -1590,13 +1845,17 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
         if raw_ips:
             custom_ips = expand_custom_ips(raw_ips)
             if not custom_ips:
-                _w(f" {A.RED}No valid IPs found in file.{A.RST}\n"); _fl()
-                time.sleep(1); return None
+                _w(f" {A.RED}No valid IPs found in file.{A.RST}\n")
+                _fl()
+                time.sleep(1)
+                return None
             _w(f" {A.GRN}Loaded {len(custom_ips)} IPs{A.RST}\n")
             _fl()
         else:
-            _w(f" {A.RED}No path entered.{A.RST}\n"); _fl()
-            time.sleep(1); return None
+            _w(f" {A.RED}No path entered.{A.RST}\n")
+            _fl()
+            time.sleep(1)
+            return None
     elif ip_ch == "4":
         _w(f" {A.CYN}Enter IPs, CIDRs (comma-separated):{A.RST}\n ")
         _w(f" {A.DIM}e.g. 104.16.0.0/24, 172.67.1.1{A.RST}\n ")
@@ -1608,17 +1867,23 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
         if raw_ips:
             custom_ips = expand_custom_ips(raw_ips)
             if not custom_ips:
-                _w(f" {A.RED}No valid IPs found.{A.RST}\n"); _fl()
-                time.sleep(1); return None
+                _w(f" {A.RED}No valid IPs found.{A.RST}\n")
+                _fl()
+                time.sleep(1)
+                return None
             _w(f" {A.GRN}Expanded to {len(custom_ips)} IPs{A.RST}\n")
             _fl()
         else:
-            _w(f" {A.RED}No IPs entered.{A.RST}\n"); _fl()
-            time.sleep(1); return None
+            _w(f" {A.RED}No IPs entered.{A.RST}\n")
+            _fl()
+            time.sleep(1)
+            return None
 
     _orig_port = int(parsed.get("port", 443))
     _w(f"\n {A.BOLD}Step 4:{A.RST} {A.CYN}Ports to scan per IP:{A.RST}\n")
-    _w(f"  {A.CYN}1{A.RST}. Original port ({_orig_port}) only {A.GRN}(recommended){A.RST}\n")
+    _w(
+        f"  {A.CYN}1{A.RST}. Original port ({_orig_port}) only {A.GRN}(recommended){A.RST}\n"
+    )
     _w(f"  {A.CYN}2{A.RST}. All CF HTTPS ports (443, 8443, 2053, 2083, 2087, 2096)\n")
     _w(f"  {A.CYN}3{A.RST}. Custom ports\n")
     _w(f" Choice [1]: ")
@@ -1645,7 +1910,8 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
             if p.isdigit() and 1 <= int(p) <= 65535:
                 probe_ports.append(int(p))
         if not probe_ports:
-            _w(f" {A.RED}No valid ports. Using {_orig_port}.{A.RST}\n"); _fl()
+            _w(f" {A.RED}No valid ports. Using {_orig_port}.{A.RST}\n")
+            _fl()
             probe_ports = [_orig_port]
     else:
         probe_ports = [_orig_port]
@@ -1655,10 +1921,18 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
     _w(f"\n {A.BOLD}Step 5:{A.RST} {A.CYN}Test intensity:{A.RST}\n")
     _w(f" {A.DIM}How many IP x fragment combinations to test in expansion.{A.RST}\n")
     _w(f" {A.DIM}More = better coverage but takes longer.{A.RST}\n\n")
-    _w(f"  {A.CYN}1{A.RST}. {A.WHT}Quick{A.RST}      500 variations   {A.DIM}~2-3 min{A.RST}\n")
-    _w(f"  {A.CYN}2{A.RST}. {A.WHT}Normal{A.RST}    1,500 variations   {A.DIM}~5-8 min{A.RST} {A.GRN}(recommended){A.RST}\n")
-    _w(f"  {A.CYN}3{A.RST}. {A.WHT}Thorough{A.RST}  3,000 variations   {A.DIM}~10-15 min{A.RST}\n")
-    _w(f"  {A.CYN}4{A.RST}. {A.WHT}Maximum{A.RST}   7,500 variations   {A.DIM}~25-40 min{A.RST}\n")
+    _w(
+        f"  {A.CYN}1{A.RST}. {A.WHT}Quick{A.RST}      500 variations   {A.DIM}~2-3 min{A.RST}\n"
+    )
+    _w(
+        f"  {A.CYN}2{A.RST}. {A.WHT}Normal{A.RST}    1,500 variations   {A.DIM}~5-8 min{A.RST} {A.GRN}(recommended){A.RST}\n"
+    )
+    _w(
+        f"  {A.CYN}3{A.RST}. {A.WHT}Thorough{A.RST}  3,000 variations   {A.DIM}~10-15 min{A.RST}\n"
+    )
+    _w(
+        f"  {A.CYN}4{A.RST}. {A.WHT}Maximum{A.RST}   7,500 variations   {A.DIM}~25-40 min{A.RST}\n"
+    )
     _w(f"\n Choice [2]: ")
     _fl()
     try:
@@ -1670,7 +1944,8 @@ def tui_pipeline_input(configless: bool = False) -> Optional[PipelineConfig]:
     _w(f" {A.GRN}-> Up to {max_expansion:,} variations{A.RST}\n")
 
     return PipelineConfig(
-        uri=uri, parsed=parsed,
+        uri=uri,
+        parsed=parsed,
         sni_pool=sni_pool,
         frag_preset=frag_preset,
         transport_variants=transport_variants,
@@ -1691,7 +1966,8 @@ async def _tui_run_pipeline(args, cli_uri: str = ""):
         _addr = parsed.get("address", "")
         _sec = parsed.get("security") or "none"
         _is_cf_smart = _is_cf_address(_addr) or (
-            _sec not in ("reality", "none", "") and _resolve_is_cf(_addr))
+            _sec not in ("reality", "none", "") and _resolve_is_cf(_addr)
+        )
         if not _is_cf_smart and _sec != "reality":
             _w(A.SHOW)
             _w(f"\n {A.RED}Server is not behind Cloudflare.{A.RST}\n")
@@ -1709,8 +1985,10 @@ async def _tui_run_pipeline(args, cli_uri: str = ""):
         else:
             transport_vars = ["ws", "xhttp"]
         pcfg = PipelineConfig(
-            uri=cli_uri, parsed=parsed,
-            sni_pool=sni_pool, frag_preset=frag_preset,
+            uri=cli_uri,
+            parsed=parsed,
+            sni_pool=sni_pool,
+            frag_preset=frag_preset,
             transport_variants=transport_vars,
             max_expansion=1500,
         )
@@ -1771,7 +2049,9 @@ class Dashboard(Component):
         return f"{A.YEL}{v * 1000:4.0f}K{A.RST}"
 
     def draw_header(self, bx: BoxRenderer, s: State):
-        elapsed = _fmt_elapsed(time.monotonic() - s.start_time) if s.start_time else "0s"
+        elapsed = (
+            _fmt_elapsed(time.monotonic() - s.start_time) if s.start_time else "0s"
+        )
         title = f" {A.BOLD}{A.WHT}CF Config Scanner{A.RST}"
         right = f"{A.DIM}{elapsed}  |  {s.mode}  |  ^C stop{A.RST}"
         bx.top()
@@ -1788,10 +2068,16 @@ class Dashboard(Component):
         bw = min(24, bx.w - 55)
         if s.phase == "latency":
             pct = s.done_count * 100 // max(1, s.total)
-            bx.line(f" {A.GRN}▶{A.RST} {A.BOLD}Latency{A.RST}          [{self._bar(s.done_count, s.total, bw)}] {s.done_count}/{s.total}  {pct}%")
+            bx.line(
+                f" {A.GRN}▶{A.RST} {A.BOLD}Latency{A.RST}          [{self._bar(s.done_count, s.total, bw)}] {s.done_count}/{s.total}  {pct}%"
+            )
         elif s.alive_n > 0:
-            cut_info = f"  {A.DIM}cut {s.latency_cut_n}{A.RST}" if s.latency_cut_n > 0 else ""
-            bx.line(f" {A.GRN}✓{A.RST} Latency          {A.GRN}{s.alive_n} alive{A.RST}  {A.DIM}{s.dead_n} dead{A.RST}{cut_info}")
+            cut_info = (
+                f"  {A.DIM}cut {s.latency_cut_n}{A.RST}" if s.latency_cut_n > 0 else ""
+            )
+            bx.line(
+                f" {A.GRN}✓{A.RST} Latency          {A.GRN}{s.alive_n} alive{A.RST}  {A.DIM}{s.dead_n} dead{A.RST}{cut_info}"
+            )
         else:
             bx.line(f" {A.DIM}○ Latency          waiting...{A.RST}")
         for i, rc in enumerate(s.rounds):
@@ -1799,7 +2085,9 @@ class Dashboard(Component):
             lbl = f"Speed R{rn} ({rc.label}x{rc.keep})"
             if s.cur_round == rn and s.phase.startswith("speed") and not s.finished:
                 pct = s.done_count * 100 // max(1, s.total)
-                bx.line(f" {A.GRN}▶{A.RST} {A.BOLD}{lbl:<18}{A.RST}[{self._bar(s.done_count, s.total, bw)}] {s.done_count}/{s.total}  {pct}%")
+                bx.line(
+                    f" {A.GRN}▶{A.RST} {A.BOLD}{lbl:<18}{A.RST}[{self._bar(s.done_count, s.total, bw)}] {s.done_count}/{s.total}  {pct}%"
+                )
             elif s.cur_round > rn or (s.cur_round >= rn and s.finished):
                 bx.line(f" {A.GRN}✓{A.RST} {lbl:<18}{A.GRN}done{A.RST}")
             else:
@@ -1861,7 +2149,9 @@ class Dashboard(Component):
         bx.sep()
         return total_results
 
-    def draw_footer(self, bx: BoxRenderer, s: State, total_results: int, rows_visible: int):
+    def draw_footer(
+        self, bx: BoxRenderer, s: State, total_results: int, rows_visible: int
+    ):
         if s.notify and time.monotonic() < s.notify_until:
             bx.line(f" {A.GRN}{A.BOLD}{s.notify}{A.RST}")
         elif s.finished:
@@ -1884,7 +2174,9 @@ class Dashboard(Component):
             bx.line(ft)
             bx.line(ft2)
         else:
-            bx.line(f" {A.DIM}{s.phase_label}...  Press Ctrl+C to stop and export partial results{A.RST}")
+            bx.line(
+                f" {A.DIM}{s.phase_label}...  Press Ctrl+C to stop and export partial results{A.RST}"
+            )
         bx.bottom()
 
     def draw(self):
@@ -1928,7 +2220,9 @@ class Dashboard(Component):
         bx = self._popup_box(f"Domains for {r.ip}  ({len(r.domains)} total)")
         ping_s = f"{r.tcp_ms:.0f}ms" if r.tcp_ms > 0 else "-"
         conn_s = f"{r.tls_ms:.0f}ms" if r.tls_ms > 0 else "-"
-        bx.line(f" {A.DIM}Score: {r.score:.1f}  |  Ping: {ping_s}  |  Conn: {conn_s}{A.RST}")
+        bx.line(
+            f" {A.DIM}Score: {r.score:.1f}  |  Ping: {ping_s}  |  Conn: {conn_s}{A.RST}"
+        )
         bx.sep()
         for d in r.domains[:vis]:
             bx.line(f"  {d}")
@@ -1942,20 +2236,24 @@ class Dashboard(Component):
         ping_s = f"{r.tcp_ms:.0f}ms" if r.tcp_ms > 0 else "-"
         conn_s = f"{r.tls_ms:.0f}ms" if r.tls_ms > 0 else "-"
         speed_s = f"{r.best_mbps:.1f} MB/s" if r.best_mbps > 0 else "-"
-        bx.line(f" {A.DIM}Score: {r.score:.1f}  |  Ping: {ping_s}  |  Conn: {conn_s}  |  Speed: {speed_s}{A.RST}")
+        bx.line(
+            f" {A.DIM}Score: {r.score:.1f}  |  Ping: {ping_s}  |  Conn: {conn_s}  |  Speed: {speed_s}{A.RST}"
+        )
         bx.sep()
         if r.uris:
             max_show = rows - 10
             for i, uri in enumerate(r.uris[:max_show]):
                 tag = f" {A.CYN}{i+1}.{A.RST} "
                 max_uri = cols - 8
-                display = uri if len(uri) <= max_uri else uri[:max_uri - 3] + "..."
+                display = uri if len(uri) <= max_uri else uri[: max_uri - 3] + "..."
                 bx.line(f"{tag}{A.GRN}{display}{A.RST}")
             if len(r.uris) > max_show:
                 bx.line(f"  {A.DIM}...and {len(r.uris) - max_show} more{A.RST}")
         else:
             bx.line(f"  {A.DIM}No VLESS/VMess URIs stored for this IP{A.RST}")
-            bx.line(f"  {A.DIM}(only available when loaded from URIs or subscriptions){A.RST}")
+            bx.line(
+                f"  {A.DIM}(only available when loaded from URIs or subscriptions){A.RST}"
+            )
         self._finish_popup(bx)
 
     def draw_help_popup(self):
@@ -1997,8 +2295,12 @@ class Dashboard(Component):
         for key, desc in col_items:
             lines.append(f"  {A.CYN}{key:<10}{A.RST} {desc}")
         lines.append("")
-        lines.append(f"  {A.DIM}Score = Conn latency (35%) + speed (50%) + TTFB (15%){A.RST}")
-        lines.append(f"  {A.DIM}'-' means not tested yet (only top IPs get speed tested){A.RST}")
+        lines.append(
+            f"  {A.DIM}Score = Conn latency (35%) + speed (50%) + TTFB (15%){A.RST}"
+        )
+        lines.append(
+            f"  {A.DIM}'-' means not tested yet (only top IPs get speed tested){A.RST}"
+        )
         lines.append(f"  {A.CYN}{'=' * W}{A.RST}")
         lines.append(f"  {A.BOLD}{A.WHT}  Made By Sam - SamNet Technologies{A.RST}")
         lines.append(f"  {A.DIM}  https://github.com/SamNet-dev/cfray{A.RST}")
@@ -2015,13 +2317,17 @@ class Dashboard(Component):
             idx = sorts.index(self.sort) if self.sort in sorts else 0
             self.sort = sorts[(idx + 1) % len(sorts)]
         elif key in ("j", "down"):
-            self.offset = min(self.offset + 1, max(0, len(sorted_all(self.st, self.sort)) - 3))
+            self.offset = min(
+                self.offset + 1, max(0, len(sorted_all(self.st, self.sort)) - 3)
+            )
         elif key in ("k", "up"):
             self.offset = max(0, self.offset - 1)
         elif key == "n":
             _, rows = term_size()
             page = max(3, rows - 18 - len(self.st.rounds))
-            self.offset = min(self.offset + page, max(0, len(sorted_all(self.st, self.sort)) - 3))
+            self.offset = min(
+                self.offset + page, max(0, len(sorted_all(self.st, self.sort)) - 3)
+            )
         elif key == "p":
             _, rows = term_size()
             page = max(3, rows - 18 - len(self.st.rounds))

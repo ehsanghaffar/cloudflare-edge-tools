@@ -2,8 +2,7 @@ import os
 import random
 import socket
 import ipaddress
-from typing import Dict, List, Optional, Tuple
-
+from typing import List
 
 VERSION = "1.1"
 SPEED_HOST = "speed.cloudflare.com"
