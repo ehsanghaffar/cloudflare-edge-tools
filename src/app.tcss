@@ -8,7 +8,7 @@ $error: #bf616a;
 $text: #eceff4;
 $text-dim: #d8dee9;
 
-CfrayApp {
+CFEdgeApp {
     background: $background;
     color: $text;
 }

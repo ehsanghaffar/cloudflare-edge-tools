@@ -81,8 +81,8 @@ from src.deploy_utils import _tui_connection_manager, _tui_run_deploy
 
 
 async def run_tui(args, deploy_mode=False):
-    from src.app import CfrayApp
-    app = CfrayApp()
+    from src.app import CFEdgeApp
+    app = CFEdgeApp()
     await app.run_async()
 
 
@@ -171,7 +171,7 @@ async def run_headless_clean(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="CF Config Scanner v1.1 - Test VLESS/VMess proxy configs",
+        description="Cloudflare Edge Scanner v1.1 - Test VLESS/VMess proxy configs",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=r"""
 Modes (sort by latency first, then speed-test the best):

@@ -287,7 +287,7 @@ def switch_transport(parsed: dict, new_transport: str, path: str = "") -> dict:
 
 
 def xray_find_binary(custom_path: Optional[str] = None) -> Optional[str]:
-    """Find xray binary. Search order: custom_path > PATH > ~/.cfray/bin/xray."""
+    """Find xray binary. Search order: custom_path > PATH > ~/.cfedge/bin/xray."""
     if custom_path and os.path.isfile(custom_path):
         return os.path.abspath(custom_path)
     xray_name = "xray.exe" if sys.platform == "win32" else "xray"
@@ -301,7 +301,7 @@ def xray_find_binary(custom_path: Optional[str] = None) -> Optional[str]:
 
 
 def xray_install() -> Optional[str]:
-    """Download xray-core to ~/.cfray/bin/. Returns binary path or None."""
+    """Download xray-core to ~/.cfedge/bin/. Returns binary path or None."""
     os.makedirs(XRAY_BIN_DIR, exist_ok=True)
     machine = _platform.machine().lower()
     if sys.platform == "win32":

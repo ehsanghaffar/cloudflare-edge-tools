@@ -104,8 +104,8 @@ class DeployView(Static):
                 yield Label("OUTPUT CONSOLE", classes="section-title")
                 yield ListView(id="deploy-console")
 
-class CfrayApp(App):
-    """A modern TUI for cfray built with Textual."""
+class CFEdgeApp(App):
+    """A modern TUI for the Cloudflare Edge Scanner built with Textual."""
     
     CSS_PATH = "app.tcss"
     BINDINGS = [
@@ -370,5 +370,5 @@ class CfrayApp(App):
             table.add_row(str(i), v.sni[:20], str(frag), f"{v.connect_ms:.0f}ms", f"{v.ttfb_ms:.0f}ms", f"{v.score:.1f}")
 
 if __name__ == "__main__":
-    app = CfrayApp()
+    app = CFEdgeApp()
     app.run()

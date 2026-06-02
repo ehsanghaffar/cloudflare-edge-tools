@@ -330,7 +330,7 @@ def deploy_fresh_config(
         "uuid": uuid_val,
         "address": ds.server_ip,
         "port": port,
-        "name": f"cfray-{protocol}-{transport}",
+        "name": f"cfedge-{protocol}-{transport}",
         "type": transport,
         "security": security,
         "sni": sni,
@@ -387,7 +387,7 @@ def generate_configless_base(
             "uuid": uuid_val,
             "address": server,
             "port": port,
-            "name": f"cfray-{protocol}-{transport}",
+            "name": f"cfedge-{protocol}-{transport}",
             "type": transport,
             "security": "tls",
             "sni": default_sni,
@@ -417,7 +417,7 @@ def generate_configless_base(
             "uuid": uuid_val,
             "address": server,
             "port": port,
-            "name": "cfray-vless-ws",
+            "name": "cfedge-vless-ws",
             "type": "ws",
             "security": "tls",
             "sni": default_sni,
@@ -434,7 +434,7 @@ def generate_configless_base(
             "spx": "",
             "mode": "",
         }
-        vless_uri = build_vless_uri(vless_parsed, default_sni, "cfray-vless-ws")
+        vless_uri = build_vless_uri(vless_parsed, default_sni, "cfedge-vless-ws")
         results.append((vless_uri, vless_parsed))
 
     return results
@@ -658,7 +658,7 @@ def deploy_run_pipeline(ds: "DeployState", print_fn) -> bool:
     ds.client_uris = []
     try:
         for i, parsed in enumerate(ds.parsed_configs):
-            tag = f"cfray-{parsed.get('protocol', 'vless')}-{i + 1}"
+            tag = f"cfedge-{parsed.get('protocol', 'vless')}-{i + 1}"
             uri = build_client_uri_for_server(parsed, ds, tag, index=i)
             ds.client_uris.append(uri)
     except (KeyError, ValueError, TypeError) as e:
@@ -877,7 +877,7 @@ def _cm_build_client_uri(inbound: dict, uuid_val: str, server_ip: str) -> Option
             tls_s = stream.get("tlsSettings") or {}
             sni = tls_s.get("serverName", "")
             parsed["sni"] = sni
-        tag = f"cfray-{protocol}-{port}"
+        tag = f"cfedge-{protocol}-{port}"
         return _build_uri(parsed, sni, tag)
     except (KeyError, ValueError, TypeError, IndexError):
         return None
@@ -1508,7 +1508,7 @@ async def _tui_run_deploy(args, preloaded_uri: str = ""):
 
 
 def _uninstall_all() -> Tuple[bool, str]:
-    """Remove everything cfray installed on this system."""
+    """Remove everything Cloudflare Edge Scanner installed on this system."""
     _out: list = []
     _had_errors = False
 
@@ -1530,7 +1530,7 @@ def _uninstall_all() -> Tuple[bool, str]:
             else:
                 _log(f"Removed {XRAY_HOME}")
         else:
-            _log("Nothing to remove (no local cfray directory)")
+            _log("Nothing to remove (no local Cloudflare Edge Scanner directory)")
         return not _had_errors, "; ".join(_out)
 
     # --- 1. Stop xray service ---
@@ -1575,7 +1575,7 @@ def _uninstall_all() -> Tuple[bool, str]:
     except (OSError, subprocess.SubprocessError):
         pass
 
-    # --- 4. Remove local client dir (~/.cfray/) ---
+    # --- 4. Remove local client dir (~/.cfedge/) ---
     if os.path.isdir(XRAY_HOME):
         shutil.rmtree(XRAY_HOME, ignore_errors=True)
         if os.path.isdir(XRAY_HOME):
@@ -2174,7 +2174,7 @@ async def _tui_connection_manager(args):
                         _uri_parsed["flow"] = "xtls-rprx-vision"
                 elif security == "tls":
                     _uri_parsed["sni"] = _uri_sni
-                _uri_tag = f"cfray-{protocol}-{new_port}"
+                _uri_tag = f"cfedge-{protocol}-{new_port}"
                 try:
                     _client_uri = _build_uri(_uri_parsed, _uri_sni, _uri_tag)
                     _w(f"\n {A.BOLD}{A.CYN}Client URI:{A.RST}\n")

@@ -38,7 +38,7 @@ CLEAN_MODES = {
                "ports": [443, 8443], "desc": "All IPs × 2 ports (~3M probes, 30-60 min)"},
 }
 
-XRAY_HOME = os.path.join(os.path.expanduser("~"), ".cfray")
+XRAY_HOME = os.path.join(os.path.expanduser("~"), ".cfedge")
 XRAY_BIN_DIR = os.path.join(XRAY_HOME, "bin")
 XRAY_TMP_DIR = os.path.join(XRAY_HOME, "tmp")
 XRAY_BASE_PORT = 10900
