@@ -11,7 +11,7 @@ from src.models import CleanScanState
 from src.utils import _dbg
 
 
-def _split_to_24s(subnets: List[str]) -> list:
+def split_to_24_blocks(subnets: List[str]) -> list:
     """Split CIDR subnets into /24 blocks, deduplicate."""
     seen = set()
     blocks = []
@@ -36,7 +36,7 @@ def _split_to_24s(subnets: List[str]) -> list:
 
 def generate_cf_ips(subnets: List[str], sample_per_24: int = 0) -> List[str]:
     """Generate IPs from CIDR subnets. sample_per_24=0 means all hosts."""
-    blocks = _split_to_24s(subnets)
+    blocks = split_to_24_blocks(subnets)
     random.shuffle(blocks)
     ips = []
     for net in blocks:
@@ -47,7 +47,7 @@ def generate_cf_ips(subnets: List[str], sample_per_24: int = 0) -> List[str]:
     return ips
 
 
-async def _tls_probe(
+async def probe_tls_handshake(
     ip: str, sni: str, timeout: float, validate: bool = True, port: int = 443,
 ) -> Tuple[float, bool, str]:
     """TLS probe with optional Cloudflare header validation.
@@ -81,12 +81,12 @@ async def _tls_probe(
                 pass
 
         if is_cf:
-            _status_line = htxt.split("\r\n", 1)[0] if "\r\n" in htxt else ""
-            _sm = re.search(r'http/\S+\s+(\d{3})', _status_line)
-            if _sm:
-                _scode = int(_sm.group(1))
-                if _scode >= 400:
-                    cf_err = f"cf-origin-{_scode}"
+            status_line = htxt.split("\r\n", 1)[0] if "\r\n" in htxt else ""
+            status_match = re.search(r'http/\S+\s+(\d{3})', status_line)
+            if status_match:
+                status_code = int(status_match.group(1))
+                if status_code >= 400:
+                    cf_err = f"cf-origin-{status_code}"
 
         w.close()
         try:
@@ -113,7 +113,7 @@ async def scan_clean_ips(
     workers: int = 500,
     timeout: float = 3.0,
     validate: bool = True,
-    cs: Optional[CleanScanState] = None,
+    scan_state: Optional[CleanScanState] = None,
     ports: Optional[List[int]] = None,
 ) -> List[Tuple[str, float]]:
     """Scan IPs for TLS + optional CF validation. Returns [(addr, latency_ms)] sorted.
@@ -125,30 +125,30 @@ async def scan_clean_ips(
     lock = asyncio.Lock()
 
     total_probes = len(ips) * len(ports)
-    if cs:
-        cs.total = total_probes
-        cs.done = 0
-        cs.found = 0
-        cs.start_time = time.monotonic()
+    if scan_state:
+        scan_state.total = total_probes
+        scan_state.done = 0
+        scan_state.found = 0
+        scan_state.start_time = time.monotonic()
 
     async def probe(ip: str, port: int):
-        if cs and cs.interrupted:
+        if scan_state and scan_state.interrupted:
             return
         async with sem:
-            if cs and cs.interrupted:
+            if scan_state and scan_state.interrupted:
                 return
-            lat, is_cf, _err = await _tls_probe(ip, sni, timeout, validate, port)
+            lat, is_cf, _err = await probe_tls_handshake(ip, sni, timeout, validate, port)
             if lat > 0 and is_cf:
                 addr = ip if port == 443 else f"{ip}:{port}"
                 async with lock:
                     results.append((addr, lat))
-                    if cs:
-                        cs.found += 1
-                        cs.all_results = results  # full reference for Ctrl+C recovery
-                        if cs.found % 10 == 0 or cs.found <= 20:
-                            cs.results = sorted(results, key=lambda x: x[1])[:20]
-            if cs:
-                cs.done += 1
+                    if scan_state:
+                        scan_state.found += 1
+                        scan_state.all_results = results  # full reference for Ctrl+C recovery
+                        if scan_state.found % 10 == 0 or scan_state.found <= 20:
+                            scan_state.results = sorted(results, key=lambda x: x[1])[:20]
+            if scan_state:
+                scan_state.done += 1
 
     # Build flat list of (ip, port) pairs
     probes = [(ip, p) for ip in ips for p in ports]
@@ -156,7 +156,7 @@ async def scan_clean_ips(
 
     BATCH = 50_000
     for i in range(0, len(probes), BATCH):
-        if cs and cs.interrupted:
+        if scan_state and scan_state.interrupted:
             break
         batch = probes[i : i + BATCH]
         tasks = [asyncio.ensure_future(probe(ip, port)) for ip, port in batch]

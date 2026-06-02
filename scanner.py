@@ -62,7 +62,7 @@ from src.constants import (A, ANSI, CDN_FALLBACK, CF_HTTPS_PORTS, CF_SUBNETS,
                            XRAY_SPEED_SIZE, XRAY_SPEED_TIMEOUT, XRAY_TMP_DIR,
                            _CF_NETS, _CF_PREFLIGHT_IPS, _generate_random_cf_ips,
                            _is_cf_address, _resolve_is_cf)
-from src.clean_finder import _split_to_24s, _tls_probe, generate_cf_ips, scan_clean_ips
+from src.clean_finder import split_to_24_blocks, probe_tls_handshake, generate_cf_ips, scan_clean_ips
 from src.config_parse import (_infer_orig_sni, fetch_sub, generate_from_template,
                               load_addresses, load_input, parse_config,
                               parse_rounds_str, parse_size, parse_vless_full,
@@ -71,7 +71,7 @@ from src.models import (CleanScanState, ConfigEntry, DeployState,
                         PipelineConfig, Result, RoundCfg, State,
                         XrayTestState, XrayVariation)
 from src.rate_limiter import CFRateLimiter
-from src.speed_test import _dl_one, _lat_one, phase1, phase2_round
+from src.speed_test import download_single, latency_test, phase1, phase2_round
 from src.tui import (Dashboard, XrayDashboard, _clean_pick_mode, _clean_show_results,
                      _draw_clean_progress, _help_clean_finder, _help_cli_reference,
                      _help_deploy, _help_getting_started, _help_scan_modes,
@@ -115,20 +115,20 @@ def build_dynamic_rounds(mode: str, alive_count: int) -> List[RoundCfg]:
     if not preset.get("dynamic"):
         return [RoundCfg(1_000_000, alive_count)]
     sizes = preset["round_sizes"]
-    pcts = preset["round_pcts"]
+    percentages = preset["round_pcts"]
     mins = preset["round_min"]
     maxs = preset["round_max"]
     small_set = alive_count <= 50
     rounds = []
-    for size, pct, mn, mx in zip(sizes, pcts, mins, maxs):
+    for size, pct, min_keep, max_keep in zip(sizes, percentages, mins, maxs):
         if small_set:
             keep = alive_count
         else:
             keep = int(alive_count * pct / 100) if pct < 100 else alive_count
-            if mn > 0:
-                keep = max(mn, keep)
-            if mx > 0:
-                keep = min(mx, keep)
+            if min_keep > 0:
+                keep = max(min_keep, keep)
+            if max_keep > 0:
+                keep = min(max_keep, keep)
         keep = min(keep, alive_count)
         if keep > 0:
             rounds.append(RoundCfg(size, keep))
@@ -195,12 +195,12 @@ async def _tui_worker_proxy(args):
     enable_ansi()
     _w(A.CLR + A.HOME + A.SHOW)
     cols, _ = term_size()
-    W = cols - 2
+    width = cols - 2
 
-    _w(f"\n{A.CYN}{'=' * (W + 2)}{A.RST}\n")
+    _w(f"\n{A.CYN}{'=' * (width + 2)}{A.RST}\n")
     _w(f"{A.CYN}|{A.RST} {A.BOLD}{A.WHT}Worker Proxy -- Fresh SNI for Any VLESS Config{A.RST}" +
-       " " * max(0, W - 50) + f"{A.CYN}|{A.RST}\n")
-    _w(f"{A.CYN}{'=' * (W + 2)}{A.RST}\n\n")
+       " " * max(0, width - 50) + f"{A.CYN}|{A.RST}\n")
+    _w(f"{A.CYN}{'=' * (width + 2)}{A.RST}\n\n")
 
     _w(f" {A.DIM}If the original domain's SNI is blocked by DPI, a CF Worker gives{A.RST}\n")
     _w(f" {A.DIM}you a fresh *.workers.dev SNI. The Worker proxies to the original{A.RST}\n")
@@ -246,10 +246,10 @@ async def _tui_worker_proxy(args):
 
     _w(f" {A.BOLD}{A.CYN}[2/3]{A.RST} {A.BOLD}Worker script generated:{A.RST}\n\n")
     script = _worker_proxy_generate_script(origin_host, origin_port, security)
-    _w(f" {A.DIM}{'-' * (W - 2)}{A.RST}\n")
+    _w(f" {A.DIM}{'-' * (width - 2)}{A.RST}\n")
     for line in script.split("\n"):
         _w(f" {A.WHT}{line}{A.RST}\n")
-    _w(f" {A.DIM}{'-' * (W - 2)}{A.RST}\n\n")
+    _w(f" {A.DIM}{'-' * (width - 2)}{A.RST}\n\n")
 
     _w(f" {A.BOLD}Deploy instructions:{A.RST}\n\n")
     _w(f"   {A.WHT}1.{A.RST} Go to {A.CYN}dash.cloudflare.com{A.RST} -> Workers & Pages -> Create\n")
@@ -275,9 +275,9 @@ async def _tui_worker_proxy(args):
         return
 
     worker_url = worker_url.replace("https://", "").replace("http://", "").rstrip("/")
-    _m = re.search(r'[a-zA-Z]', worker_url)
-    if _m and _m.start() > 0 and ".workers.dev" in worker_url:
-        worker_url = worker_url[_m.start():]
+    match = re.search(r'[a-zA-Z]', worker_url)
+    if match and match.start() > 0 and ".workers.dev" in worker_url:
+        worker_url = worker_url[match.start():]
 
     _w(f"\n   {A.GRN}Worker URL: {worker_url}{A.RST}\n")
     new_parsed = dict(parsed)
@@ -472,11 +472,11 @@ async def resolve_all(st: State, workers: int = 100):
             st.ip_map[c.ip].append(c)
     st.ips = list(st.ip_map.keys())
     for ip in st.ips:
-        cs = st.ip_map[ip]
+        config_entries = st.ip_map[ip]
         st.res[ip] = Result(
             ip=ip,
-            domains=[c.address for c in cs],
-            uris=[c.original_uri for c in cs if c.original_uri],
+            domains=[c.address for c in config_entries],
+            uris=[c.original_uri for c in config_entries if c.original_uri],
         )
 
 
@@ -523,24 +523,24 @@ async def run_scan(st: State, workers: int, speed_workers: int, timeout: float, 
         st.rounds = build_dynamic_rounds(st.mode, len(alive))
         _dbg(f"=== Dynamic rounds: {[(r.label, r.keep) for r in st.rounds]} ===")
     if not st.interrupted and st.rounds:
-        rlim = CFRateLimiter()
-        cands = list(alive)
+        rate_limiter = CFRateLimiter()
+        candidates = list(alive)
         cdn_host = SPEED_HOST
         cdn_path = ""
-        for i, rc in enumerate(st.rounds):
+        for i, round_cfg in enumerate(st.rounds):
             if st.interrupted:
                 break
             st.cur_round = i + 1
             st.phase = f"speed_r{i + 1}"
-            actual_count = min(rc.keep, len(cands))
-            st.phase_label = f"Speed R{i + 1} ({rc.label} x {actual_count})"
-            _dbg(f"=== Round R{i+1}: {rc.size}B x {actual_count} IPs, workers={speed_workers}, timeout={speed_timeout}s, budget={rlim.BUDGET - rlim.count} left ===")
+            actual_count = min(round_cfg.keep, len(candidates))
+            st.phase_label = f"Speed R{i + 1} ({round_cfg.label} x {actual_count})"
+            _dbg(f"=== Round R{i+1}: {round_cfg.size}B x {actual_count} IPs, workers={speed_workers}, timeout={speed_timeout}s, budget={rate_limiter.BUDGET - rate_limiter.count} left ===")
             if i > 0:
                 calc_scores(st)
-                cands = sorted(cands, key=lambda ip: st.res[ip].score, reverse=True)
-            cands = cands[:rc.keep]
-            await phase2_round(st, rc, cands, speed_workers, speed_timeout,
-                               rlim=rlim, cdn_host=cdn_host, cdn_path=cdn_path)
+                candidates = sorted(candidates, key=lambda ip: st.res[ip].score, reverse=True)
+            candidates = candidates[:round_cfg.keep]
+            await phase2_round(st, round_cfg, candidates, speed_workers, speed_timeout,
+                               rate_limiter=rate_limiter, cdn_host=cdn_host, cdn_path=cdn_path)
             calc_scores(st)
     st.finished = True
     calc_scores(st)
@@ -685,8 +685,8 @@ async def run_tui(args, deploy_mode=False):
             _w(A.SHOW + "\n")
             print("No IPs resolved — check network or config addresses.")
             return
-        dash = Dashboard(st)
-        refresh = asyncio.create_task(_refresh_loop(dash, st))
+        dashboard = Dashboard(st)
+        refresh = asyncio.create_task(_refresh_loop(dashboard, st))
         scan_task = asyncio.ensure_future(
             run_scan(st, args.workers, args.speed_workers,
                      args.timeout, args.speed_timeout))
@@ -717,14 +717,14 @@ async def run_tui(args, deploy_mode=False):
             input_method = None
             input_value = None
             continue
-        csv_p, cfg_p, full_p = do_export(st, input_value, dash.sort, st.top)
+        csv_path, cfg_path, full_path = do_export(st, input_value, dashboard.sort, st.top)
         _w(A.CLR + A.HOME + A.SHOW)
         _w(f"\n{A.CYN}{'=' * (cols - 2)}{A.RST}\n")
         _w(f" {A.BOLD}{A.GRN}Scan Complete{A.RST}\n")
         _w(f" {A.CYN}Results saved:{A.RST}\n")
-        _w(f"   {A.WHT}CSV:{A.RST} {csv_p}\n")
-        _w(f"   {A.WHT}Configs:{A.RST} {cfg_p}\n")
-        _w(f"   {A.WHT}All sorted:{A.RST} {full_p}\n")
+        _w(f"   {A.WHT}CSV:{A.RST} {csv_path}\n")
+        _w(f"   {A.WHT}Configs:{A.RST} {cfg_path}\n")
+        _w(f"   {A.WHT}All sorted:{A.RST} {full_path}\n")
         _w(f"{A.CYN}{'=' * (cols - 2)}{A.RST}\n\n")
         _w(f" {A.YEL}What next?{A.RST}\n")
         _w(f"   {A.WHT}[1]{A.RST} Start new scan\n")
@@ -771,14 +771,14 @@ async def run_tui(args, deploy_mode=False):
         elif ch == "7":
             _flush_stdin()
             _restore_console_input()
-            _w(f"\n {A.BOLD}Sort by (score/latency/speed) [{dash.sort}]: {A.RST}")
+            _w(f"\n {A.BOLD}Sort by (score/latency/speed) [{dashboard.sort}]: {A.RST}")
             _fl()
             try:
                 inp = input().strip().lower()
                 if inp in ("score", "latency", "speed"):
-                    dash.sort = inp
+                    dashboard.sort = inp
                 else:
-                    _w(f" {A.DIM}Keeping: {dash.sort}{A.RST}\n")
+                    _w(f" {A.DIM}Keeping: {dashboard.sort}{A.RST}\n")
             except (EOFError, KeyboardInterrupt, OSError):
                 pass
             _w(f" {A.BOLD}Top N [{st.top}]: {A.RST}")
@@ -792,8 +792,8 @@ async def run_tui(args, deploy_mode=False):
                         pass
             except (EOFError, KeyboardInterrupt, OSError):
                 pass
-            csv_p, cfg_p, full_p = do_export(st, input_value, dash.sort, st.top)
-            _w(f"\n {A.GRN}Exported: {cfg_p}{A.RST}\n")
+            csv_path, cfg_path, full_path = do_export(st, input_value, dashboard.sort, st.top)
+            _w(f"\n {A.GRN}Exported: {cfg_path}{A.RST}\n")
             _w(f" {A.DIM}Press any key...{A.RST}\n")
             _fl()
             _read_key_blocking()
@@ -844,11 +844,11 @@ async def run_headless(args):
         print("\n  Interrupted! Exporting partial results...")
     signal.signal(signal.SIGINT, old_sigint)
     if st.finished:
-        csv_p, cfg_p, full_p = do_export(st, source, top=st.top)
+        csv_path, cfg_path, full_path = do_export(st, source, top=st.top)
         print(f"\nResults saved to:")
-        print(f"  CSV:     {csv_p}")
-        print(f"  Configs: {cfg_p}")
-        print(f"  All:     {full_p}")
+        print(f"  CSV:     {csv_path}")
+        print(f"  Configs: {cfg_path}")
+        print(f"  All:     {full_path}")
     else:
         print("\nScan did not complete.")
 

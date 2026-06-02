@@ -19,14 +19,14 @@ from src.constants import (A, ANSI, CLEAN_MODES, RESULTS_DIR, SPEED_HOST,
                            XRAY_QUICK_SIZE, XRAY_QUICK_TIMEOUT, XRAY_SPEED_SIZE,
                            XRAY_SPEED_TIMEOUT, XRAY_BASE_PORT, XRAY_BIN_DIR,
                            CF_TEST_IPS)
-from src.clean_finder import _split_to_24s, _tls_probe, generate_cf_ips, scan_clean_ips
+from src.clean_finder import split_to_24_blocks, probe_tls_handshake, generate_cf_ips, scan_clean_ips
 from src.config_parse import (fetch_sub, generate_from_template, load_addresses,
                               load_input, parse_config, parse_rounds_str, parse_size,
                               parse_vless_full, parse_vmess_full)
 from src.models import (CleanScanState, ConfigEntry, DeployState, PipelineConfig,
                         Result, RoundCfg, State, XrayTestState, XrayVariation)
 from src.rate_limiter import CFRateLimiter
-from src.speed_test import _dl_one, _lat_one, phase1, phase2_round
+from src.speed_test import phase1, phase2_round
 from src.utils import (_dbg, _fmt_elapsed, _flush_stdin, _prompt_number,
                        _read_key_blocking, _read_key_nb, _restore_console_input,
                        _vl, _w, _fl, _wait_any_key, enable_ansi, term_size)
@@ -639,53 +639,41 @@ def _clean_pick_mode() -> Optional[str]:
             return "mega"
 
 
-def _draw_clean_progress(cs: CleanScanState):
-    cols, rows = term_size()
-    W = cols - 2
-    out: List[str] = []
+def _draw_clean_progress(scan_state: CleanScanState):
+    _w(A.CLR + A.HOME)
+    cols, _ = term_size()
+    w = cols - 2
+    elapsed = _fmt_elapsed(time.monotonic() - scan_state.start_time) if scan_state.start_time else "0s"
 
-    def bx(c: str):
-        out.append(f"{A.CYN}║{A.RST}" + c + " " * max(0, W - _vl(c)) + f"{A.CYN}║{A.RST}")
+    def bx(msg): _w(f" {msg}\n")
 
-    out.append(f"{A.CYN}╔{'═' * W}╗{A.RST}")
-    elapsed = _fmt_elapsed(time.monotonic() - cs.start_time) if cs.start_time else "0s"
-    title = f" {A.BOLD}{A.WHT}Finding Clean Cloudflare IPs{A.RST}"
-    right = f"{A.DIM}{elapsed}  |  ^C stop{A.RST}"
-    bx(title + " " * max(1, W - _vl(title) - _vl(right)) + right)
-    out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-
-    pct = cs.done * 100 // max(1, cs.total)
-    bw = max(1, min(30, W - 40))
-    filled = int(bw * pct / 100)
-    bar = f"{A.GRN}{'█' * filled}{A.DIM}{'░' * (bw - filled)}{A.RST}"
-    bx(f" Probing [{bar}] {cs.done:,}/{cs.total:,}  {pct}%")
-
-    found_line = f" {A.GRN}Found: {cs.found:,} clean IPs{A.RST}"
-    if cs.results:
-        best_lat = cs.results[0][1]
-        found_line += f"   {A.DIM}Best: {best_lat:.0f}ms{A.RST}"
-    bx(found_line)
-
-    out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-    bx(f" {A.BOLD}Top IPs found (by latency):{A.RST}")
-
-    vis = min(15, rows - 12)
-    if cs.results:
-        for i, (ip, lat) in enumerate(cs.results[:vis]):
-            bx(f"   {A.CYN}{i+1:>3}.{A.RST} {ip:<22} {A.GRN}{lat:>6.0f}ms{A.RST}")
-    else:
-        bx(f"   {A.DIM}Scanning...{A.RST}")
-
-    used = len(cs.results[:vis]) if cs.results else 1
-    for _ in range(vis - used):
-        bx("")
-
-    out.append(f"{A.CYN}╠{'═' * W}╣{A.RST}")
-    bx(f" {A.DIM}Press Ctrl+C to stop early and show results{A.RST}")
-    out.append(f"{A.CYN}╚{'═' * W}╝{A.RST}")
-
-    _w(A.HOME)
-    _w("\n".join(out) + "\n")
+    pct = scan_state.done * 100 // max(1, scan_state.total)
+    filled = max(1, pct * (w - 10) // 100) if pct < 100 else w - 10
+    bar = "\u2588" * filled + "\u2591" * (w - 10 - filled)
+    bx(f" {A.WHT}{'=' * (w)}{A.RST}")
+    bx(f" {A.BOLD}{A.CYN}Clean IP Finder{A.RST}")
+    bx(f" {A.BOLD}{A.GRN}Scanning Cloudflare IP ranges{A.RST}")
+    bx(f" {A.WHT}{'=' * (w)}{A.RST}")
+    bx(f" Probing [{bar}] {scan_state.done:,}/{scan_state.total:,}  {pct}%")
+    found_line = f" {A.GRN}Found: {scan_state.found:,} clean IPs{A.RST}"
+    bx(f" {elapsed:>4s}  {found_line}")
+    if scan_state.results:
+        best_lat = scan_state.results[0][1]
+        bx(f" {A.DIM}Best latency: {best_lat:.1f} ms{A.RST}")
+    bx(f" {A.WHT}{'-' * (w)}{A.RST}")
+    if scan_state.results:
+        vis = min(12, len(scan_state.results))
+        pre_rows = max(0, vis - 8)
+        rows = scan_state.results[:vis]
+        bx(f" {'IP':20s}  {'Latency':>8s}")
+        for i, (ip, lat) in enumerate(scan_state.results[:vis]):
+            star = " " if i >= pre_rows else " "
+            bx(f" {star}{i + 1:2d}. {ip:20s}  {lat:7.1f}ms")
+    used = len(scan_state.results[:vis]) if scan_state.results else 1
+    bx(f" {A.WHT}{'=' * (w)}{A.RST}")
+    bx("")
+    bx(f" {A.DIM}Press any key to stop scan and review results{A.RST}")
+    bx("")
     _fl()
 
 
@@ -804,25 +792,25 @@ async def tui_run_clean_finder() -> Optional[Tuple[str, str]]:
     ports = scan_cfg.get("ports", [443])
     _dbg(f"CLEAN: Generated {len(ips):,} IPs × {len(ports)} port(s), sample={scan_cfg['sample']}")
 
-    cs = CleanScanState()
+    scan_state = CleanScanState()
     scan_task = asyncio.ensure_future(
         scan_clean_ips(
             ips, workers=scan_cfg["workers"], timeout=5.0,
-            validate=scan_cfg["validate"], cs=cs, ports=ports,
+            validate=scan_cfg["validate"], scan_state=scan_state, ports=ports,
         )
     )
 
     old_sigint = signal.getsignal(signal.SIGINT)
     _loop = asyncio.get_running_loop()
     def _sig(sig, frame):
-        cs.interrupted = True
+        scan_state.interrupted = True
         _loop.call_soon_threadsafe(scan_task.cancel)
     signal.signal(signal.SIGINT, _sig)
 
     _w(A.CLR + A.HIDE)
     try:
         while not scan_task.done():
-            _draw_clean_progress(cs)
+            _draw_clean_progress(scan_state)
             await asyncio.sleep(0.3)
     except asyncio.CancelledError:
         pass
@@ -834,12 +822,12 @@ async def tui_run_clean_finder() -> Optional[Tuple[str, str]]:
     try:
         results = await scan_task
     except asyncio.CancelledError:
-        results = sorted(cs.all_results or cs.results, key=lambda x: x[1])
+        results = sorted(scan_state.all_results or scan_state.results, key=lambda x: x[1])
     except Exception as e:
         _dbg(f"CLEAN: scan_task error: {e}")
-        results = sorted(cs.all_results or cs.results, key=lambda x: x[1])
+        results = sorted(scan_state.all_results or scan_state.results, key=lambda x: x[1])
 
-    elapsed = _fmt_elapsed(time.monotonic() - cs.start_time) if cs.start_time > 0 else "0s"
+    elapsed = _fmt_elapsed(time.monotonic() - scan_state.start_time) if scan_state.start_time > 0 else "0s"
     _dbg(f"CLEAN: Done in {elapsed}. Found {len(results):,} / {len(ips):,}")
 
     action = _clean_show_results(results, elapsed)

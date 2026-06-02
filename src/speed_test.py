@@ -10,7 +10,7 @@ from src.rate_limiter import CFRateLimiter
 from src.utils import _dbg
 
 
-async def _lat_one(ip: str, sni: str, timeout: float) -> Tuple[float, float, str]:
+async def latency_test(ip: str, sni: str, timeout: float) -> Tuple[float, float, str]:
     try:
         t0 = time.monotonic()
         r, w = await asyncio.wait_for(
@@ -55,12 +55,12 @@ async def phase1(st: State, workers: int, timeout: float):
     st.done_count = 0
     sem = asyncio.Semaphore(workers)
 
-    async def go(ip: str):
+    async def _test_latency(ip: str):
         async with sem:
             if st.interrupted:
                 return
             res = st.res[ip]
-            tcp, tls, err = await _lat_one(ip, SPEED_HOST, timeout)
+            tcp, tls, err = await latency_test(ip, SPEED_HOST, timeout)
             res.tcp_ms = tcp
             res.tls_ms = tls
             res.error = err
@@ -71,7 +71,7 @@ async def phase1(st: State, workers: int, timeout: float):
             else:
                 st.dead_n += 1
 
-    tasks = [asyncio.ensure_future(go(ip)) for ip in st.ips]
+    tasks = [asyncio.ensure_future(_test_latency(ip)) for ip in st.ips]
     try:
         await asyncio.gather(*tasks, return_exceptions=True)
     except asyncio.CancelledError:
@@ -82,7 +82,7 @@ async def phase1(st: State, workers: int, timeout: float):
                 t.cancel()
 
 
-async def _dl_one(
+async def download_single(
     ip: str, size: int, timeout: float,
     host: str = "", path: str = "",
 ) -> Tuple[float, float, int, str, str]:
@@ -257,25 +257,25 @@ async def _dl_one(
 
 async def phase2_round(
     st: State,
-    rcfg: RoundCfg,
+    round_cfg: RoundCfg,
     candidates: List[str],
     workers: int,
     timeout: float,
-    rlim: Optional[CFRateLimiter] = None,
+    rate_limiter: Optional[CFRateLimiter] = None,
     cdn_host: str = "",
     cdn_path: str = "",
 ):
     st.total = len(candidates)
     st.done_count = 0
-    if rcfg.size >= 50_000_000:
+    if round_cfg.size >= 50_000_000:
         workers = min(workers, 6)
-    elif rcfg.size >= 10_000_000:
+    elif round_cfg.size >= 10_000_000:
         workers = min(workers, 8)
     sem = asyncio.Semaphore(workers)
 
     max_retries = 2
 
-    async def go(ip: str):
+    async def _download_round(ip: str):
         best_mbps_this = 0.0
         best_ttfb = -1.0
         best_colo = ""
@@ -291,17 +291,17 @@ async def phase2_round(
             if force_cdn and CDN_FALLBACK:
                 use_host, use_path = CDN_FALLBACK
                 _dbg(f"DL {ip}: forced fallback CDN {use_host}")
-            elif rlim and rlim.would_block() and CDN_FALLBACK:
+            elif rate_limiter and rate_limiter.would_block() and CDN_FALLBACK:
                 use_host, use_path = CDN_FALLBACK
                 _dbg(f"DL {ip}: using fallback CDN {use_host}")
-            elif rlim:
-                await rlim.acquire(st)
+            elif rate_limiter:
+                await rate_limiter.acquire(st)
 
             await sem.acquire()
             try:
                 if st.interrupted:
                     break
-                ttfb, mbps, _total, colo, err = await _dl_one(
+                ttfb, mbps, _total, colo, err = await download_single(
                     ip, rcfg.size, timeout, use_host, use_path
                 )
             finally:
@@ -314,8 +314,8 @@ async def phase2_round(
                         ra = int(err.split(":", 1)[1])
                     except (ValueError, IndexError):
                         ra = 60
-                if rlim:
-                    rlim.report_429(ra)
+                if rate_limiter:
+                    rate_limiter.report_429(ra)
                 if CDN_FALLBACK:
                     force_cdn = True
                     _dbg(f"DL {ip}: retrying with CDN fallback (attempt {attempt + 1})")
@@ -350,7 +350,7 @@ async def phase2_round(
 
         st.done_count += 1
 
-    tasks = [asyncio.ensure_future(go(ip)) for ip in candidates]
+    tasks = [asyncio.ensure_future(_download_round(ip)) for ip in candidates]
     try:
         await asyncio.gather(*tasks, return_exceptions=True)
     except asyncio.CancelledError:
