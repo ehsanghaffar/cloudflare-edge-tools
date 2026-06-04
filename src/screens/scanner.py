@@ -305,7 +305,7 @@ class ScannerScreen(Widget):
         dash = self.app.get_dashboard()
         if dash:
             scores = [r.score for r in st.res.values() if r.alive and r.score > 0]
-            best = max(st.res[r].best_mbps for r in st.res if st.res[r].alive and st.res[r].best_mbps > 0) if st.res else 0
+            best = max((st.res[r].best_mbps for r in st.res if st.res[r].alive and st.res[r].best_mbps > 0), default=0)
             dash.update_stats(
                 configs=len(st.configs),
                 last_scan=time.strftime("%H:%M:%S"),
