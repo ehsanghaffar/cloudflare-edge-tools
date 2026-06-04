@@ -3,24 +3,18 @@
 import asyncio
 import argparse
 import csv
-import glob as globmod
 import os
-import platform as _platform
-import re
 import signal
-import socket
 import time
 from typing import List, Tuple
 
 from src.constants import (
-    A,
     CF_HTTPS_PORTS,
     CLEAN_MODES,
     DEBUG_LOG,
     LATENCY_TIMEOUT,
     LATENCY_WORKERS,
     PRESETS,
-    SPEED_HOST,
     SPEED_TIMEOUT,
     SPEED_WORKERS,
     _CF_NETS,
@@ -32,50 +26,45 @@ from src.config_parse import (
     load_addresses,
     load_input,
     parse_rounds_str,
-    parse_vless_full,
 )
 from src.models import (
     ConfigEntry,
-    PipelineConfig,
     Result,
     RoundCfg,
     State,
-    XrayTestState,
     calc_scores,
     sorted_alive,
 )
-from src.rate_limiter import CFRateLimiter
-from src.speed_test import phase1, phase2_round
-from src.tui import (
-    Dashboard,
-    _post_pipeline_results,
-    _run_pipeline_core,
-)
-from src.xray_utils import build_vless_uri, xray_find_binary, xray_install
 from src.utils import (
     _dbg,
-    _fl,
-    _flush_stdin,
-    _read_key_blocking,
-    _restore_console_input,
-    _vl,
-    _w,
-    enable_ansi,
-    term_size,
     _results_path,
 )
 from src.core import (
     build_dynamic_rounds,
+    do_export,
     resolve_all,
     run_scan,
 )
-from src.deploy_utils import _tui_connection_manager, _tui_run_deploy
 
 
-async def run_tui(args, deploy_mode=False):
+def load_configs_from_args(args) -> Tuple[List[ConfigEntry], str]:
+    if args.sub:
+        configs = fetch_sub(args.sub)
+        return configs, args.sub
+    if args.template and args.input:
+        addrs = load_addresses(args.input)
+        configs = generate_from_template(args.template, addrs)
+        return configs, args.input
+    if args.input:
+        configs = load_input(args.input)
+        return configs, args.input
+    return [], ""
+
+
+def run_tui(args, deploy_mode=False):
     from src.app import CFEdgeApp
     app = CFEdgeApp()
-    await app.run_async()
+    app.run()
 
 
 async def run_headless(args):
@@ -146,10 +135,10 @@ async def run_headless_clean(args):
             else:
                 subnets.append(s + "/24")
     else:
-        subnets = list(_CF_NETS)
+        subnets = [str(n) for n in _CF_NETS]
     cf_ips = generate_cf_ips(subnets, args.clean_scan_per_24)
     print(f"Testing {len(cf_ips)} IPs across {len(subnets)} subnets in {mode} mode")
-    results = await scan_clean_ips(cf_ips, mode, args.clean_ports, args.clean_workers)
+    results = await scan_clean_ips(cf_ips, workers=args.clean_workers, ports=args.clean_ports)
     if results:
         elapsed = time.time() - start_time
         print(f"\nFound {len(results)} clean IPs in {elapsed:.1f}s:")
@@ -271,7 +260,7 @@ Examples:
         asyncio.run(run_headless(args))
     else:
         deploy_mode = False
-        asyncio.run(run_tui(args, deploy_mode))
+        run_tui(args, deploy_mode)
 
 
 if __name__ == "__main__":
