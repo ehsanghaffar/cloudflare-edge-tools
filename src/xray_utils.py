@@ -4,6 +4,7 @@ import copy
 import glob as globmod
 import json
 import os
+import platform
 import re
 import secrets
 import shutil
@@ -303,7 +304,7 @@ def xray_find_binary(custom_path: Optional[str] = None) -> Optional[str]:
 def xray_install() -> Optional[str]:
     """Download xray-core to ~/.cfedge/bin/. Returns binary path or None."""
     os.makedirs(XRAY_BIN_DIR, exist_ok=True)
-    machine = _platform.machine().lower()
+    machine = platform.machine().lower()
     if sys.platform == "win32":
         if "aarch64" in machine or "arm64" in machine:
             asset_name = "Xray-windows-arm64-v8a.zip"
