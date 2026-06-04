@@ -173,11 +173,11 @@ class ScannerScreen(Widget):
         if btn_id == "btn-refresh":
             self._refresh_file_list()
         elif btn_id == "btn-path":
-            self.push_screen(FilePickerScreen(), self._on_file_picked)
+            self.app.push_screen(FilePickerScreen(), self._on_file_picked)
         elif btn_id == "btn-sub":
-            self.push_screen(SubURLScreen(), self._on_sub_url)
+            self.app.push_screen(SubURLScreen(), self._on_sub_url)
         elif btn_id == "btn-template":
-            self.push_screen(TemplateScreen(), self._on_template)
+            self.app.push_screen(TemplateScreen(), self._on_template)
         elif btn_id == "btn-start-scan":
             self._start_scan()
         elif btn_id == "btn-stop-scan":

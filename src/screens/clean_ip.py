@@ -106,7 +106,7 @@ class CleanIPScreen(Widget):
         elif btn_id == "btn-save-clean":
             self._save_results()
         elif btn_id == "btn-template-test":
-            self.push_screen(CleanTempScreen(), self._on_template_uri)
+            self.app.push_screen(CleanTempScreen(), self._on_template_uri)
 
     def _set_mode(self, mode: str):
         for m in ("quick", "normal", "full", "mega"):
@@ -202,7 +202,7 @@ class CleanIPScreen(Widget):
             self.scan_state.interrupted = True
 
     def _save_results(self):
-        self.push_screen(CleanIPSaver(), self._on_save_name)
+        self.app.push_screen(CleanIPSaver(), self._on_save_name)
 
     def _on_save_name(self, name: str):
         if not name or not self.results:
